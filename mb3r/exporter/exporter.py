@@ -1,0 +1,412 @@
+#!/usr/bin/env python3
+
+import json
+import os
+import tempfile
+import threading
+import time
+import urllib.error
+import urllib.request
+from datetime import datetime
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+
+
+LISTEN = os.environ.get("EXPORTER_LISTEN", "0.0.0.0:9113")
+SHEAFT_BASE_URL = os.environ.get("SHEAFT_BASE_URL", "http://sheaft:8080").rstrip("/")
+POLL_INTERVAL = float(os.environ.get("EXPORTER_POLL_INTERVAL", "5"))
+OUTPUT_DIR = Path(os.environ.get("EXPORTER_OUTPUT_DIR", "/tmp"))
+EXPORTER_ENDPOINT_CONFIG = os.environ.get("EXPORTER_ENDPOINT_CONFIG", "")
+EXPORTER_PRIMARY_PROFILE = os.environ.get("EXPORTER_PRIMARY_PROFILE", "steady-state")
+
+
+DECISION_CODES = {
+    "pass": 0,
+    "report": 0,
+    "warn": 1,
+    "review": 1,
+    "fail": 2,
+    "error": 3,
+}
+
+DEFAULT_EXPECTED_ENDPOINT_WEIGHTS = {
+    "frontend:GET /api/products": 0.25,
+    "frontend:GET /api/recommendations": 0.25,
+    "frontend:GET /api/cart": 0.25,
+    "frontend:POST /api/checkout": 0.25,
+}
+
+
+def now_epoch() -> float:
+    return time.time()
+
+
+def parse_timestamp(raw: str | None) -> float | None:
+    if not raw:
+        return None
+    try:
+        if raw.endswith("Z"):
+            raw = raw[:-1] + "+00:00"
+        return datetime.fromisoformat(raw).timestamp()
+    except ValueError:
+        return None
+
+
+def json_get(url: str):
+    req = urllib.request.Request(url, headers={"Accept": "application/json"})
+    with urllib.request.urlopen(req, timeout=5) as resp:
+        return json.loads(resp.read().decode("utf-8"))
+
+
+def normalize_weights(weights):
+    normalized = {}
+    total = 0.0
+    for endpoint_id, raw_weight in (weights or {}).items():
+        try:
+            weight = float(raw_weight)
+        except (TypeError, ValueError):
+            continue
+        if weight <= 0:
+            continue
+        normalized[str(endpoint_id)] = weight
+        total += weight
+
+    if not normalized or total <= 0:
+        normalized = dict(DEFAULT_EXPECTED_ENDPOINT_WEIGHTS)
+        total = sum(normalized.values())
+
+    return {endpoint_id: weight / total for endpoint_id, weight in normalized.items()}
+
+
+def load_expected_endpoint_weights():
+    if EXPORTER_ENDPOINT_CONFIG:
+        try:
+            payload = json.loads(Path(EXPORTER_ENDPOINT_CONFIG).read_text(encoding="utf-8"))
+            if isinstance(payload, dict):
+                weights = payload.get("endpoint_weights") or payload.get("expected_endpoints") or payload
+                return normalize_weights(weights)
+        except (OSError, json.JSONDecodeError, TypeError, ValueError):
+            pass
+
+    return normalize_weights(DEFAULT_EXPECTED_ENDPOINT_WEIGHTS)
+
+
+def write_json(path: Path, payload):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False, dir=path.parent) as tmp:
+        json.dump(payload, tmp, indent=2, sort_keys=True)
+        tmp.write("\n")
+        temp_path = Path(tmp.name)
+    temp_path.replace(path)
+
+
+def escape_label(value: str) -> str:
+    return value.replace("\\", "\\\\").replace("\n", "\\n").replace('"', '\\"')
+
+
+class State:
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.ready = False
+        self.last_error = ""
+        self.last_success_ts = 0.0
+        self.status = {}
+        self.report = {}
+
+    def update_success(self, status, report):
+        with self.lock:
+            self.ready = True
+            self.last_error = ""
+            self.last_success_ts = now_epoch()
+            self.status = status
+            self.report = report
+
+    def update_error(self, err: Exception):
+        with self.lock:
+            self.last_error = str(err)
+
+    def snapshot(self):
+        with self.lock:
+            return {
+                "ready": self.ready,
+                "last_error": self.last_error,
+                "last_success_ts": self.last_success_ts,
+                "status": self.status,
+                "report": self.report,
+            }
+
+
+STATE = State()
+EXPECTED_ENDPOINT_WEIGHTS = load_expected_endpoint_weights()
+
+
+def normalized_profiles(report_payload):
+    profiles = report_payload.get("profiles") or []
+    if profiles:
+        return profiles
+    endpoint_results = report_payload.get("endpoint_results") or []
+    if not endpoint_results:
+        return []
+    return [
+        {
+            "name": "default",
+            "simulation": {
+                "weighted_aggregate": report_payload.get("summary", {}).get("weighted_overall_availability", 0.0),
+                "unweighted_aggregate": report_payload.get("summary", {}).get("overall_availability", 0.0),
+            },
+            "endpoint_results": endpoint_results,
+            "decision": report_payload.get("policy_evaluation", {}).get("decision", "report"),
+            "endpoints_below_threshold": 0,
+        }
+    ]
+
+
+def modeled_profiles(report_payload):
+    profiles = normalized_profiles(report_payload)
+    modeled = []
+    for profile in profiles:
+        profile_name = profile.get("name", "default")
+        raw_results = profile.get("endpoint_results") or []
+        by_endpoint = {}
+        for endpoint in raw_results:
+            endpoint_id = endpoint.get("endpoint_id")
+            if endpoint_id:
+                by_endpoint[endpoint_id] = endpoint
+
+        endpoint_results = []
+        weighted_aggregate = 0.0
+        unweighted_sum = 0.0
+        endpoints_below_threshold = 0
+
+        for endpoint_id, weight in EXPECTED_ENDPOINT_WEIGHTS.items():
+            source = by_endpoint.get(endpoint_id, {})
+            availability = float(source.get("availability", 0.0) or 0.0)
+            threshold = float(source.get("threshold", 0.0) or 0.0)
+            endpoint_results.append(
+                {
+                    "endpoint_id": endpoint_id,
+                    "availability": availability,
+                    "threshold": threshold,
+                    "weight": weight,
+                }
+            )
+            weighted_aggregate += availability * weight
+            unweighted_sum += availability
+            if threshold and availability < threshold:
+                endpoints_below_threshold += 1
+
+        unweighted_aggregate = unweighted_sum / len(endpoint_results) if endpoint_results else 0.0
+        modeled.append(
+            {
+                "name": profile_name,
+                "simulation": {
+                    "weighted_aggregate": weighted_aggregate,
+                    "unweighted_aggregate": unweighted_aggregate,
+                },
+                "endpoint_results": endpoint_results,
+                "decision": profile.get("decision", report_payload.get("policy_evaluation", {}).get("decision", "report")),
+                "endpoints_below_threshold": endpoints_below_threshold,
+            }
+        )
+
+    return modeled
+
+
+def raw_profile_aggregate(profile):
+    simulation = profile.get("simulation", {})
+    aggregate = profile.get("aggregate", {})
+    weighted = simulation.get("weighted_aggregate")
+    if weighted is None:
+        weighted = aggregate.get("availability")
+    unweighted = simulation.get("unweighted_aggregate")
+    if unweighted is None:
+        unweighted = weighted if weighted is not None else 0.0
+    return {
+        "weighted": float(weighted or 0.0),
+        "unweighted": float(unweighted or 0.0),
+    }
+
+
+def expected_journey_coverage(profile):
+    raw_results = profile.get("endpoint_results") or []
+    observed = {
+        endpoint.get("endpoint_id")
+        for endpoint in raw_results
+        if endpoint.get("endpoint_id") in EXPECTED_ENDPOINT_WEIGHTS
+    }
+    total = len(EXPECTED_ENDPOINT_WEIGHTS)
+    ratio = (len(observed) / total) if total else 0.0
+    return {
+        "present": len(observed),
+        "total": total,
+        "ratio": ratio,
+    }
+
+
+def primary_profile(profiles):
+    for profile in profiles:
+        if profile.get("name") == EXPORTER_PRIMARY_PROFILE:
+            return profile
+    return profiles[0] if profiles else None
+
+
+def metrics_payload():
+    state = STATE.snapshot()
+    ready = 1 if state["ready"] else 0
+    status = state["status"] or {}
+    report = state["report"] or {}
+    decision = (
+        status.get("decision")
+        or report.get("policy_evaluation", {}).get("decision")
+        or ("error" if state["last_error"] else "report")
+    )
+    decision_code = DECISION_CODES.get(decision, 4)
+
+    summary = report.get("summary", {})
+    posture = summary.get("cross_profile_weighted_availability")
+    raw_profiles = normalized_profiles(report)
+    profiles = modeled_profiles(report)
+    if posture is None:
+        if profiles:
+            posture = sum(profile["simulation"]["weighted_aggregate"] for profile in profiles) / len(profiles)
+        else:
+            posture = summary.get("weighted_overall_availability")
+            if posture in (None, 0):
+                posture = summary.get("overall_availability", 0.0)
+    if posture is None:
+        posture = 0.0
+
+    generated_at = status.get("generated_at") or report.get("generated_at")
+    generated_ts = parse_timestamp(generated_at)
+    report_age = max(0.0, now_epoch() - generated_ts) if generated_ts else 0.0
+
+    lines = [
+        "# HELP mb3r_up 1 when the bridge exporter has a current Sheaft report.",
+        "# TYPE mb3r_up gauge",
+        f"mb3r_up {ready}",
+        "# HELP mb3r_gate_decision_code Numeric code for the current gate decision.",
+        "# TYPE mb3r_gate_decision_code gauge",
+        f'mb3r_gate_decision_code{{decision="{escape_label(decision)}"}} {decision_code}',
+        "# HELP mb3r_gate_decision_info Info metric for the current gate decision.",
+        "# TYPE mb3r_gate_decision_info gauge",
+        f'mb3r_gate_decision_info{{decision="{escape_label(decision)}"}} 1',
+        "# HELP mb3r_posture_score Current weighted overall posture score.",
+        "# TYPE mb3r_posture_score gauge",
+        f"mb3r_posture_score {posture}",
+        "# HELP mb3r_report_age_seconds Age of the current Sheaft report in seconds.",
+        "# TYPE mb3r_report_age_seconds gauge",
+        f"mb3r_report_age_seconds {report_age}",
+        "# HELP mb3r_last_report_timestamp_seconds Unix timestamp of the current Sheaft report.",
+        "# TYPE mb3r_last_report_timestamp_seconds gauge",
+        f"mb3r_last_report_timestamp_seconds {generated_ts or 0}",
+        "# HELP mb3r_last_success_timestamp_seconds Unix timestamp of the last successful poll.",
+        "# TYPE mb3r_last_success_timestamp_seconds gauge",
+        f"mb3r_last_success_timestamp_seconds {state['last_success_ts']}",
+    ]
+
+    for profile in profiles:
+        profile_name = profile.get("name", "default")
+        simulation = profile.get("simulation", {})
+        lines.extend(
+            [
+                f'mb3r_profile_aggregate_availability{{profile="{escape_label(profile_name)}",aggregate="weighted"}} {simulation.get("weighted_aggregate", 0.0)}',
+                f'mb3r_profile_aggregate_availability{{profile="{escape_label(profile_name)}",aggregate="unweighted"}} {simulation.get("unweighted_aggregate", 0.0)}',
+                f'mb3r_endpoints_below_threshold{{profile="{escape_label(profile_name)}"}} {profile.get("endpoints_below_threshold", 0)}',
+            ]
+        )
+        for endpoint in profile.get("endpoint_results", []):
+            endpoint_id = endpoint.get("endpoint_id", "")
+            lines.extend(
+                [
+                    f'mb3r_endpoint_availability{{profile="{escape_label(profile_name)}",endpoint="{escape_label(endpoint_id)}"}} {endpoint.get("availability", 0.0)}',
+                    f'mb3r_endpoint_threshold{{profile="{escape_label(profile_name)}",endpoint="{escape_label(endpoint_id)}"}} {endpoint.get("threshold", 0.0)}',
+                ]
+            )
+
+    raw_profiles_by_name = {profile.get("name", "default"): profile for profile in raw_profiles}
+    for profile_name, raw_profile in raw_profiles_by_name.items():
+        aggregates = raw_profile_aggregate(raw_profile)
+        coverage = expected_journey_coverage(raw_profile)
+        lines.extend(
+            [
+                f'mb3r_profile_simulated_availability{{profile="{escape_label(profile_name)}",aggregate="weighted"}} {aggregates["weighted"]}',
+                f'mb3r_profile_simulated_availability{{profile="{escape_label(profile_name)}",aggregate="unweighted"}} {aggregates["unweighted"]}',
+                f'mb3r_expected_journey_coverage_ratio{{profile="{escape_label(profile_name)}"}} {coverage["ratio"]}',
+                f'mb3r_expected_journey_coverage_count{{profile="{escape_label(profile_name)}"}} {coverage["present"]}',
+                f'mb3r_expected_journey_total{{profile="{escape_label(profile_name)}"}} {coverage["total"]}',
+            ]
+        )
+
+    if state["last_error"]:
+        lines.extend(
+            [
+                "# HELP mb3r_last_error_info Last poll error; value is always 1 when present.",
+                "# TYPE mb3r_last_error_info gauge",
+                f'mb3r_last_error_info{{message="{escape_label(state["last_error"])}"}} 1',
+            ]
+        )
+
+    return "\n".join(lines) + "\n"
+
+
+def poll_loop():
+    while True:
+        try:
+            status = json_get(f"{SHEAFT_BASE_URL}/status")
+            report = json_get(f"{SHEAFT_BASE_URL}/current-report")
+            write_json(OUTPUT_DIR / "status.json", status)
+            write_json(OUTPUT_DIR / "current-report.json", report)
+            STATE.update_success(status, report)
+        except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, json.JSONDecodeError, OSError) as err:
+            STATE.update_error(err)
+        time.sleep(POLL_INTERVAL)
+
+
+class Handler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path == "/metrics":
+            body = metrics_payload().encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+
+        if self.path == "/healthz":
+            body = b'{"ok": true}'
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+
+        if self.path == "/readyz":
+            state = STATE.snapshot()
+            body = json.dumps({"ready": state["ready"], "last_error": state["last_error"]}).encode("utf-8")
+            self.send_response(200 if state["ready"] else 503)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+
+        self.send_response(404)
+        self.end_headers()
+
+    def log_message(self, format, *args):
+        return
+
+
+def main():
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    host, port = LISTEN.rsplit(":", 1)
+    thread = threading.Thread(target=poll_loop, daemon=True)
+    thread.start()
+    server = ThreadingHTTPServer((host, int(port)), Handler)
+    server.serve_forever()
+
+
+if __name__ == "__main__":
+    main()

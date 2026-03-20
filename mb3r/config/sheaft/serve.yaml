@@ -1,0 +1,16 @@
+schema_version: "1.0"
+listen: ":8080"
+
+artifact:
+  path: /mb3r/out/artifacts/latest-snapshot.json
+  mode: file
+
+analysis_file: /etc/mb3r/sheaft/analysis.yaml
+
+poll_interval: 10s
+watch_fs: true
+watch_polling: true
+
+history:
+  max_items: 50
+  disk_dir: /mb3r/out/history

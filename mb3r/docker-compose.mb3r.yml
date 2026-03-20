@@ -1,0 +1,85 @@
+# Copyright The OpenTelemetry Authors
+# SPDX-License-Identifier: Apache-2.0
+
+services:
+  bering:
+    image: ghcr.io/mb3r-lab/bering@sha256:8e8ce6599b43477b0653617e829d41c62a3189d16b60ecb424cca718fc0e2674
+    container_name: bering
+    restart: unless-stopped
+    command: ["serve", "--config", "/etc/mb3r/bering/serve.yaml"]
+    volumes:
+      - ./mb3r/config/bering/serve.yaml:/etc/mb3r/bering/serve.yaml:ro
+      - ./mb3r/out:/mb3r/out
+    ports:
+      - "14318:4318"
+
+  sheaft:
+    image: ghcr.io/mb3r-lab/sheaft@sha256:eb1ebf9d96c55c5bb29e226e07496d152eb3a66b52dd9d34ba799fa4aef70624
+    container_name: sheaft
+    restart: unless-stopped
+    command: ["serve", "--config", "/etc/mb3r/sheaft/serve.yaml"]
+    volumes:
+      - ./mb3r/config/sheaft/serve.yaml:/etc/mb3r/sheaft/serve.yaml:ro
+      - ./mb3r/config/sheaft/analysis.yaml:/etc/mb3r/sheaft/analysis.yaml:ro
+      - ./mb3r/config/sheaft/predicate-contract.yaml:/etc/mb3r/sheaft/predicate-contract.yaml:ro
+      - ./mb3r/out:/mb3r/out
+    ports:
+      - "19080:8080"
+    depends_on:
+      bering:
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8080/readyz || exit 1"]
+      start_period: 10s
+      interval: 5s
+      timeout: 5s
+      retries: 24
+
+  mb3r-exporter:
+    image: python:3.12-alpine3.20
+    container_name: mb3r-exporter
+    restart: unless-stopped
+    working_dir: /app
+    command: ["python", "/app/exporter.py"]
+    environment:
+      - SHEAFT_BASE_URL=http://sheaft:8080
+      - EXPORTER_LISTEN=0.0.0.0:9113
+      - EXPORTER_POLL_INTERVAL=5
+      - EXPORTER_OUTPUT_DIR=/mb3r/out/reports
+      - EXPORTER_ENDPOINT_CONFIG=/etc/mb3r/exporter/expected-endpoints.json
+      - EXPORTER_PRIMARY_PROFILE=steady-state
+    volumes:
+      - ./mb3r/exporter:/app:ro
+      - ./mb3r/config/exporter/expected-endpoints.json:/etc/mb3r/exporter/expected-endpoints.json:ro
+      - ./mb3r/out:/mb3r/out
+    ports:
+      - "19113:9113"
+    depends_on:
+      sheaft:
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:9113/healthz || exit 1"]
+      start_period: 5s
+      interval: 5s
+      timeout: 5s
+      retries: 24
+
+  otel-collector:
+    command:
+      - "--config=/etc/otelcol-config.yml"
+      - "--config=/etc/otelcol-config-extras.yml"
+      - "--config=/etc/otelcol-config-mb3r.yml"
+    environment:
+      - BERING_METRICS_TARGET=bering:4318
+      - MB3R_EXPORTER_METRICS_TARGET=mb3r-exporter:9113
+    volumes:
+      - ./mb3r/config/otel-collector/otelcol-config.mb3r.yml:/etc/otelcol-config-mb3r.yml:ro
+    depends_on:
+      bering:
+        condition: service_started
+      mb3r-exporter:
+        condition: service_started
+
+  grafana:
+    volumes:
+      - ./mb3r/grafana/dashboards/mb3r:/etc/grafana/provisioning/dashboards/mb3r:ro

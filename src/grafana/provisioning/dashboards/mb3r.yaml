@@ -1,0 +1,14 @@
+# Copyright The OpenTelemetry Authors
+# SPDX-License-Identifier: Apache-2.0
+
+apiVersion: 1
+providers:
+  - name: "MB3R"
+    orgId: 1
+    folder: "MB3R"
+    folderUid: "mb3r"
+    type: file
+    disableDeletion: false
+    editable: true
+    options:
+      path: /etc/grafana/provisioning/dashboards/mb3r

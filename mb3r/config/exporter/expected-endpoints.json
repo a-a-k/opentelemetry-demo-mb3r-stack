@@ -1,0 +1,8 @@
+{
+  "endpoint_weights": {
+    "frontend:GET /api/products": 0.25,
+    "frontend:GET /api/recommendations": 0.25,
+    "frontend:GET /api/cart": 0.25,
+    "frontend:POST /api/checkout": 0.25
+  }
+}

@@ -1,0 +1,30 @@
+# Copyright The OpenTelemetry Authors
+# SPDX-License-Identifier: Apache-2.0
+
+exporters:
+  otlphttp/bering:
+    endpoint: http://bering:4318
+    tls:
+      insecure: true
+
+receivers:
+  prometheus/mb3r:
+    config:
+      scrape_configs:
+        - job_name: "mb3r-bering"
+          metrics_path: /metrics
+          static_configs:
+            - targets:
+                - ${env:BERING_METRICS_TARGET}
+        - job_name: "mb3r-exporter"
+          metrics_path: /metrics
+          static_configs:
+            - targets:
+                - ${env:MB3R_EXPORTER_METRICS_TARGET}
+
+service:
+  pipelines:
+    traces:
+      exporters: [otlp_grpc/jaeger, debug, spanmetrics, otlphttp/bering]
+    metrics:
+      receivers: [docker_stats, httpcheck/frontend-proxy, hostmetrics, nginx, otlp, postgresql, redis, spanmetrics, prometheus/mb3r]

@@ -1,0 +1,14 @@
+server:
+  listen_address: ":4318"
+  grpc_listen_address: ""
+  max_request_bytes: 10485760
+runtime:
+  flush_interval: 5s
+  window_size: 45s
+  max_in_memory_spans: 20000
+  late_span_policy: current_window
+sink:
+  directory: /mb3r/out/artifacts/snapshots
+  latest_path: /mb3r/out/artifacts/latest-snapshot.json
+logging:
+  structured: true

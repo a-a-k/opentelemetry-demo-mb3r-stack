@@ -1,0 +1,36 @@
+schema_version: "1.0"
+seed: 42
+trials: 15000
+sampling_mode: independent_replica
+failure_probability: 0.03
+
+predicate_contract: /etc/mb3r/sheaft/predicate-contract.yaml
+
+endpoint_weights:
+  frontend:GET /api/products: 0.25
+  frontend:GET /api/recommendations: 0.25
+  frontend:GET /api/cart: 0.25
+  frontend:POST /api/checkout: 0.25
+
+profiles:
+  - name: steady-state
+    sampling_mode: independent_replica
+    failure_probability: 0.03
+  - name: single-service-fault
+    sampling_mode: fixed_k_service_set
+    fixed_k_failures: 1
+  - name: correlated-service-fault
+    sampling_mode: independent_service
+    failure_probability: 0.12
+
+gate:
+  mode: warn
+  default_action: warn
+  evaluation_rule: all_profiles
+  global_threshold: 0.35
+  aggregate_threshold: 0.60
+  cross_profile_aggregate_threshold: 0.70
+  profile_aggregate_thresholds:
+    steady-state: 0.88
+    single-service-fault: 0.45
+    correlated-service-fault: 0.55

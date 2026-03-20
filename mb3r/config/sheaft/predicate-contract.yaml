@@ -1,0 +1,39 @@
+schema_version: "1.0"
+
+predicates:
+  frontend:GET /api/products:
+    type: all_of
+    description: Immediate product listing success requires the frontend and product catalog path.
+    services:
+      - frontend
+      - product-catalog
+
+  frontend:GET /api/recommendations:
+    type: all_of
+    description: Immediate recommendations success requires the frontend and recommendation service path.
+    services:
+      - frontend
+      - recommendation
+
+  frontend:GET /api/cart:
+    type: all_of
+    description: Immediate cart success requires the frontend and cart service path.
+    services:
+      - frontend
+      - cart
+
+  frontend:POST /api/checkout:
+    type: all_of
+    description: Immediate checkout success requires the frontend, checkout orchestration, cart, payment, and shipping services.
+    services:
+      - frontend
+      - checkout
+      - cart
+      - payment
+      - shipping
+
+endpoint_weights:
+  frontend:GET /api/products: 0.25
+  frontend:GET /api/recommendations: 0.25
+  frontend:GET /api/cart: 0.25
+  frontend:POST /api/checkout: 0.25
