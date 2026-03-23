@@ -588,7 +588,7 @@
           "showLegend": false
         },
         "rowHeight": 0.9,
-        "showValue": "always",
+        "showValue": "never",
         "tooltip": {
           "mode": "single"
         }
@@ -677,7 +677,7 @@
           "showLegend": false
         },
         "rowHeight": 0.8,
-        "showValue": "always",
+        "showValue": "never",
         "tooltip": {
           "mode": "single"
         }
@@ -710,5 +710,5 @@
   "timezone": "browser",
   "title": "MB3R Resilience Posture",
   "uid": "mb3r-resilience",
-  "version": 8
+  "version": 9
 }
