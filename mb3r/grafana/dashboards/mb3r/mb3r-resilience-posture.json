@@ -41,32 +41,108 @@
         "defaults": {
           "color": {
             "mode": "thresholds"
-          },
-          "max": 1,
-          "min": 0,
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Overall Posture"
+            },
+            "properties": [
               {
-                "color": "red",
-                "value": null
+                "id": "unit",
+                "value": "percentunit"
               },
               {
-                "color": "yellow",
-                "value": 0.6
+                "id": "min",
+                "value": 0
               },
               {
-                "color": "green",
-                "value": 0.85
+                "id": "max",
+                "value": 1
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "red",
+                      "value": null
+                    },
+                    {
+                      "color": "yellow",
+                      "value": 0.6
+                    },
+                    {
+                      "color": "green",
+                      "value": 0.85
+                    }
+                  ]
+                }
               }
             ]
           },
-          "unit": "percentunit"
-        }
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Policy Verdict"
+            },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "options": {
+                      "0": {
+                        "text": "pass"
+                      },
+                      "1": {
+                        "text": "warn"
+                      },
+                      "2": {
+                        "text": "fail"
+                      },
+                      "3": {
+                        "text": "error"
+                      }
+                    },
+                    "type": "value"
+                  }
+                ]
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "yellow",
+                      "value": 1
+                    },
+                    {
+                      "color": "red",
+                      "value": 2
+                    },
+                    {
+                      "color": "dark-red",
+                      "value": 3
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
       },
       "gridPos": {
         "h": 6,
-        "w": 4,
+        "w": 6,
         "x": 0,
         "y": 5
       },
@@ -74,22 +150,31 @@
         "colorMode": "background",
         "graphMode": "none",
         "justifyMode": "center",
+        "orientation": "horizontal",
         "reduceOptions": {
           "calcs": [
             "lastNotNull"
           ],
           "values": false
         },
-        "textMode": "value"
+        "textMode": "value_and_name",
+        "wideLayout": true
       },
       "targets": [
         {
           "instant": true,
           "expr": "mb3r_posture_score",
+          "legendFormat": "Overall Posture",
           "refId": "A"
+        },
+        {
+          "expr": "max without (decision) (mb3r_gate_decision_code)",
+          "instant": true,
+          "legendFormat": "Policy Verdict",
+          "refId": "B"
         }
       ],
-      "title": "Overall Posture",
+      "title": "Current State",
       "type": "stat"
     },
     {
@@ -99,78 +184,71 @@
       },
       "fieldConfig": {
         "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "mappings": [
-            {
-              "options": {
-                "0": {
-                  "text": "pass"
-                },
-                "1": {
-                  "text": "warn"
-                },
-                "2": {
-                  "text": "fail"
-                },
-                "3": {
-                  "text": "error"
-                }
-              },
-              "type": "value"
-            }
-          ],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              },
-              {
-                "color": "yellow",
-                "value": 1
-              },
-              {
-                "color": "red",
-                "value": 2
-              },
-              {
-                "color": "dark-red",
-                "value": 3
-              }
-            ]
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto",
+              "wrapText": true
+            },
+            "filterable": true,
+            "inspect": true
           }
         }
       },
       "gridPos": {
         "h": 6,
-        "w": 4,
-        "x": 4,
+        "w": 12,
+        "x": 6,
         "y": 5
       },
       "options": {
-        "colorMode": "background",
-        "graphMode": "none",
-        "justifyMode": "center",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
+        "cellHeight": "sm",
+        "footer": {
+          "countRows": false,
+          "fields": "",
+          "reducer": [
+            "sum"
           ],
-          "values": false
+          "show": false
         },
-        "textMode": "value"
+        "showHeader": true,
+        "sortBy": [
+          {
+            "desc": false,
+            "displayName": "Type"
+          }
+        ]
       },
       "targets": [
         {
-          "expr": "max without (decision) (mb3r_gate_decision_code)",
+          "expr": "mb3r_missing_model_item_info",
+          "format": "table",
           "instant": true,
           "refId": "A"
         }
       ],
-      "title": "Policy Verdict",
-      "type": "stat"
+      "title": "Missing From Model",
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "Value": true,
+              "__name__": true
+            },
+            "indexByName": {
+              "kind": 0,
+              "name": 1
+            },
+            "renameByName": {
+              "kind": "Type",
+              "name": "Missing Item"
+            }
+          }
+        }
+      ],
+      "type": "table"
     },
     {
       "datasource": {
@@ -204,147 +282,39 @@
       },
       "gridPos": {
         "h": 6,
-        "w": 4,
-        "x": 16,
+        "w": 6,
+        "x": 18,
         "y": 5
       },
       "options": {
         "colorMode": "background",
         "graphMode": "none",
         "justifyMode": "center",
+        "orientation": "horizontal",
         "reduceOptions": {
           "calcs": [
             "lastNotNull"
           ],
           "values": false
         },
-        "textMode": "value"
+        "textMode": "value_and_name",
+        "wideLayout": true
       },
       "targets": [
         {
           "instant": true,
           "expr": "mb3r_report_age_seconds",
+          "legendFormat": "Report Age",
           "refId": "A"
-        }
-      ],
-      "title": "Sheaft Report Age",
-      "type": "stat"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "webstore-metrics"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "continuous-GrYlRd"
-          },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              },
-              {
-                "color": "yellow",
-                "value": 30
-              },
-              {
-                "color": "red",
-                "value": 90
-              }
-            ]
-          },
-          "unit": "s"
-        }
-      },
-      "gridPos": {
-        "h": 6,
-        "w": 4,
-        "x": 20,
-        "y": 5
-      },
-      "options": {
-        "colorMode": "background",
-        "graphMode": "none",
-        "justifyMode": "center",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "values": false
         },
-        "textMode": "value"
-      },
-      "targets": [
         {
           "instant": true,
           "expr": "snapshot_age_seconds",
-          "refId": "A"
-        }
-      ],
-      "title": "Bering Snapshot Age",
-      "type": "stat"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "webstore-metrics"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "fixedColor": "red",
-            "mode": "fixed"
-          },
-          "noValue": "No removals",
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "red",
-                "value": null
-              }
-            ]
-          }
-        }
-      },
-      "gridPos": {
-        "h": 6,
-        "w": 8,
-        "x": 8,
-        "y": 5
-      },
-      "options": {
-        "colorMode": "background_solid",
-        "graphMode": "none",
-        "justifyMode": "center",
-        "orientation": "auto",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "values": false
-        },
-        "textMode": "name"
-      },
-      "targets": [
-        {
-          "expr": "mb3r_snapshot_missing_relevant_service_info",
-          "instant": true,
-          "legendFormat": "service / {{service}}",
-          "refId": "A"
-        },
-        {
-          "expr": "mb3r_snapshot_missing_target_endpoint_info",
-          "instant": true,
-          "legendFormat": "journey / {{endpoint}}",
+          "legendFormat": "Snapshot Age",
           "refId": "B"
         }
       ],
-      "title": "Recent Model Removals",
+      "title": "Freshness",
       "type": "stat"
     },
     {
@@ -642,5 +612,5 @@
   "timezone": "browser",
   "title": "MB3R Resilience Posture",
   "uid": "mb3r-resilience",
-  "version": 4
+  "version": 5
 }

@@ -225,8 +225,10 @@ def load_snapshot_context():
     context = {
         "current_snapshot_id": "",
         "previous_snapshot_id": "",
-        "missing_services": [],
-        "missing_endpoints": [],
+        "current_missing_services": [],
+        "current_missing_endpoints": [],
+        "recent_removed_services": [],
+        "recent_removed_endpoints": [],
     }
 
     try:
@@ -237,6 +239,11 @@ def load_snapshot_context():
     context["current_snapshot_id"] = str(current.get("snapshot_id") or "")
     current_services = item_ids((current.get("model") or {}).get("services"))
     current_endpoints = item_ids((current.get("model") or {}).get("endpoints"))
+    if RELEVANT_SERVICES:
+        context["current_missing_services"] = sorted(RELEVANT_SERVICES - current_services)
+    context["current_missing_endpoints"] = sorted(
+        endpoint_id for endpoint_id in EXPECTED_ENDPOINT_WEIGHTS if endpoint_id not in current_endpoints
+    )
 
     previous = None
     try:
@@ -272,8 +279,8 @@ def load_snapshot_context():
         if endpoint_id in EXPECTED_ENDPOINT_WEIGHTS
     }
 
-    context["missing_services"] = sorted(missing_services)
-    context["missing_endpoints"] = sorted(missing_endpoints)
+    context["recent_removed_services"] = sorted(missing_services)
+    context["recent_removed_endpoints"] = sorted(missing_endpoints)
     return context
 
 
@@ -482,15 +489,33 @@ def metrics_payload():
         "# HELP mb3r_last_success_timestamp_seconds Unix timestamp of the last successful poll.",
         "# TYPE mb3r_last_success_timestamp_seconds gauge",
         f"mb3r_last_success_timestamp_seconds {state['last_success_ts']}",
-        "# HELP mb3r_snapshot_missing_relevant_services_count Count of posture-relevant services missing vs previous snapshot.",
+        "# HELP mb3r_snapshot_missing_relevant_services_count Count of posture-relevant services missing from the current model.",
         "# TYPE mb3r_snapshot_missing_relevant_services_count gauge",
-        f"mb3r_snapshot_missing_relevant_services_count {len(snapshot_context.get('missing_services', []))}",
-        "# HELP mb3r_snapshot_missing_target_endpoints_count Count of target journeys missing vs previous snapshot.",
+        f"mb3r_snapshot_missing_relevant_services_count {len(snapshot_context.get('current_missing_services', []))}",
+        "# HELP mb3r_snapshot_missing_target_endpoints_count Count of target journeys missing from the current model.",
         "# TYPE mb3r_snapshot_missing_target_endpoints_count gauge",
-        f"mb3r_snapshot_missing_target_endpoints_count {len(snapshot_context.get('missing_endpoints', []))}",
+        f"mb3r_snapshot_missing_target_endpoints_count {len(snapshot_context.get('current_missing_endpoints', []))}",
     ]
 
-    missing_services = snapshot_context.get("missing_services", [])
+    current_missing_services = snapshot_context.get("current_missing_services", [])
+    current_missing_endpoints = snapshot_context.get("current_missing_endpoints", [])
+    if current_missing_services or current_missing_endpoints:
+        lines.extend(
+            [
+                "# HELP mb3r_missing_model_item_info Info metric for services and journeys currently missing from the model.",
+                "# TYPE mb3r_missing_model_item_info gauge",
+            ]
+        )
+        for service in current_missing_services:
+            lines.append(
+                f'mb3r_missing_model_item_info{{kind="service",name="{escape_label(service)}"}} 1'
+            )
+        for endpoint_id in current_missing_endpoints:
+            lines.append(
+                f'mb3r_missing_model_item_info{{kind="journey",name="{escape_label(endpoint_id)}"}} 1'
+            )
+
+    missing_services = snapshot_context.get("recent_removed_services", [])
     if missing_services:
         lines.extend(
             [
@@ -501,7 +526,7 @@ def metrics_payload():
         for service in missing_services:
             lines.append(f'mb3r_snapshot_missing_relevant_service_info{{service="{escape_label(service)}"}} 1')
 
-    missing_endpoints = snapshot_context.get("missing_endpoints", [])
+    missing_endpoints = snapshot_context.get("recent_removed_endpoints", [])
     if missing_endpoints:
         lines.extend(
             [
