@@ -533,15 +533,19 @@
             {
               "options": {
                 "0": {
+                  "color": "green",
                   "text": "pass"
                 },
                 "1": {
+                  "color": "yellow",
                   "text": "warn"
                 },
                 "2": {
+                  "color": "red",
                   "text": "fail"
                 },
                 "3": {
+                  "color": "dark-red",
                   "text": "error"
                 }
               },
@@ -582,6 +586,8 @@
           "displayMode": "list",
           "placement": "bottom"
         },
+        "rowHeight": 0.9,
+        "showValue": "never",
         "tooltip": {
           "mode": "single"
         }
@@ -604,10 +610,35 @@
       "fieldConfig": {
         "defaults": {
           "color": {
-            "mode": "palette-classic"
+            "mode": "thresholds"
           },
           "max": 4,
-          "min": 0
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 1
+              },
+              {
+                "color": "orange",
+                "value": 2
+              },
+              {
+                "color": "red",
+                "value": 3
+              },
+              {
+                "color": "dark-red",
+                "value": 4
+              }
+            ]
+          }
         }
       },
       "gridPos": {
@@ -621,6 +652,8 @@
           "displayMode": "list",
           "placement": "bottom"
         },
+        "rowHeight": 0.8,
+        "showValue": "always",
         "tooltip": {
           "mode": "single"
         }
@@ -628,12 +661,12 @@
       "targets": [
         {
           "expr": "mb3r_endpoints_below_threshold",
-          "legendFormat": "{{profile}} below threshold",
+          "legendFormat": "{{profile}}",
           "refId": "B"
         }
       ],
       "title": "Threshold Breaches by Profile",
-      "type": "timeseries"
+      "type": "state-timeline"
     }
   ],
   "refresh": "10s",
@@ -653,5 +686,5 @@
   "timezone": "browser",
   "title": "MB3R Resilience Posture",
   "uid": "mb3r-resilience",
-  "version": 6
+  "version": 7
 }
