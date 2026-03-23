@@ -10,5 +10,6 @@ providers:
     type: file
     disableDeletion: false
     editable: true
+    updateIntervalSeconds: 10
     options:
       path: /etc/grafana/provisioning/dashboards/mb3r
