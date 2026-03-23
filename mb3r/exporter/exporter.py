@@ -17,6 +17,7 @@ SHEAFT_BASE_URL = os.environ.get("SHEAFT_BASE_URL", "http://sheaft:8080").rstrip
 POLL_INTERVAL = float(os.environ.get("EXPORTER_POLL_INTERVAL", "5"))
 OUTPUT_DIR = Path(os.environ.get("EXPORTER_OUTPUT_DIR", "/tmp"))
 EXPORTER_ENDPOINT_CONFIG = os.environ.get("EXPORTER_ENDPOINT_CONFIG", "")
+EXPORTER_POLICY_CONFIG = os.environ.get("EXPORTER_POLICY_CONFIG", "")
 EXPORTER_PRIMARY_PROFILE = os.environ.get("EXPORTER_PRIMARY_PROFILE", "steady-state")
 
 
@@ -34,6 +35,18 @@ DEFAULT_EXPECTED_ENDPOINT_WEIGHTS = {
     "frontend:GET /api/recommendations": 0.25,
     "frontend:GET /api/cart": 0.25,
     "frontend:POST /api/checkout": 0.25,
+}
+
+DEFAULT_POLICY = {
+    "mode": "warn",
+    "endpoint_threshold": 0.35,
+    "aggregate_threshold": 0.60,
+    "cross_profile_aggregate_threshold": 0.70,
+    "profile_aggregate_thresholds": {
+        "steady-state": 0.88,
+        "single-service-fault": 0.45,
+        "correlated-service-fault": 0.55,
+    },
 }
 
 
@@ -100,6 +113,32 @@ def write_json(path: Path, payload):
     temp_path.replace(path)
 
 
+def load_policy():
+    policy = dict(DEFAULT_POLICY)
+    policy["profile_aggregate_thresholds"] = dict(DEFAULT_POLICY["profile_aggregate_thresholds"])
+
+    if EXPORTER_POLICY_CONFIG:
+        try:
+            payload = json.loads(Path(EXPORTER_POLICY_CONFIG).read_text(encoding="utf-8"))
+            if isinstance(payload, dict):
+                policy.update({key: value for key, value in payload.items() if key != "profile_aggregate_thresholds"})
+                thresholds = payload.get("profile_aggregate_thresholds")
+                if isinstance(thresholds, dict):
+                    policy["profile_aggregate_thresholds"].update(
+                        {str(key): float(value) for key, value in thresholds.items()}
+                    )
+        except (OSError, json.JSONDecodeError, TypeError, ValueError):
+            pass
+
+    for field in ("endpoint_threshold", "aggregate_threshold", "cross_profile_aggregate_threshold"):
+        try:
+            policy[field] = float(policy[field])
+        except (TypeError, ValueError, KeyError):
+            policy[field] = DEFAULT_POLICY[field]
+
+    return policy
+
+
 def escape_label(value: str) -> str:
     return value.replace("\\", "\\\\").replace("\n", "\\n").replace('"', '\\"')
 
@@ -138,6 +177,7 @@ class State:
 
 STATE = State()
 EXPECTED_ENDPOINT_WEIGHTS = load_expected_endpoint_weights()
+POLICY = load_policy()
 
 
 def normalized_profiles(report_payload):
@@ -181,7 +221,7 @@ def modeled_profiles(report_payload):
         for endpoint_id, weight in EXPECTED_ENDPOINT_WEIGHTS.items():
             source = by_endpoint.get(endpoint_id, {})
             availability = float(source.get("availability", 0.0) or 0.0)
-            threshold = float(source.get("threshold", 0.0) or 0.0)
+            threshold = float(source.get("threshold", POLICY["endpoint_threshold"]) or POLICY["endpoint_threshold"])
             endpoint_results.append(
                 {
                     "endpoint_id": endpoint_id,
@@ -210,6 +250,45 @@ def modeled_profiles(report_payload):
         )
 
     return modeled
+
+
+def modeled_decision(profiles, posture, source_decision):
+    if not profiles:
+        return source_decision
+
+    aggregate_threshold = POLICY["aggregate_threshold"]
+    cross_profile_threshold = POLICY["cross_profile_aggregate_threshold"]
+    profile_thresholds = POLICY["profile_aggregate_thresholds"]
+    mode = str(POLICY.get("mode", "warn")).lower()
+
+    severe_breach = posture < aggregate_threshold
+    for profile in profiles:
+        weighted = float(profile.get("simulation", {}).get("weighted_aggregate", 0.0) or 0.0)
+        if weighted < aggregate_threshold:
+            severe_breach = True
+            break
+        if any(
+            float(endpoint.get("availability", 0.0) or 0.0)
+            < float(endpoint.get("threshold", POLICY["endpoint_threshold"]) or POLICY["endpoint_threshold"])
+            for endpoint in profile.get("endpoint_results", [])
+        ):
+            severe_breach = True
+            break
+
+    if severe_breach:
+        return "fail"
+
+    if posture < cross_profile_threshold:
+        return "warn" if mode == "warn" else "fail"
+
+    for profile in profiles:
+        profile_name = profile.get("name", "default")
+        weighted = float(profile.get("simulation", {}).get("weighted_aggregate", 0.0) or 0.0)
+        threshold = float(profile_thresholds.get(profile_name, aggregate_threshold))
+        if weighted < threshold:
+            return "warn" if mode == "warn" else "fail"
+
+    return "pass"
 
 
 def raw_profile_aggregate(profile):
@@ -255,26 +334,26 @@ def metrics_payload():
     ready = 1 if state["ready"] else 0
     status = state["status"] or {}
     report = state["report"] or {}
-    decision = (
+    source_decision = (
         status.get("decision")
         or report.get("policy_evaluation", {}).get("decision")
         or ("error" if state["last_error"] else "report")
     )
-    decision_code = DECISION_CODES.get(decision, 4)
 
-    summary = report.get("summary", {})
-    posture = summary.get("cross_profile_weighted_availability")
     raw_profiles = normalized_profiles(report)
     profiles = modeled_profiles(report)
-    if posture is None:
-        if profiles:
-            posture = sum(profile["simulation"]["weighted_aggregate"] for profile in profiles) / len(profiles)
-        else:
-            posture = summary.get("weighted_overall_availability")
-            if posture in (None, 0):
-                posture = summary.get("overall_availability", 0.0)
+    summary = report.get("summary", {})
+    posture = None
+    if profiles:
+        posture = sum(profile["simulation"]["weighted_aggregate"] for profile in profiles) / len(profiles)
+    else:
+        posture = summary.get("weighted_overall_availability")
+        if posture in (None, 0):
+            posture = summary.get("overall_availability", 0.0)
     if posture is None:
         posture = 0.0
+    decision = modeled_decision(profiles, posture, source_decision)
+    decision_code = DECISION_CODES.get(decision, 4)
 
     generated_at = status.get("generated_at") or report.get("generated_at")
     generated_ts = parse_timestamp(generated_at)
@@ -290,6 +369,9 @@ def metrics_payload():
         "# HELP mb3r_gate_decision_info Info metric for the current gate decision.",
         "# TYPE mb3r_gate_decision_info gauge",
         f'mb3r_gate_decision_info{{decision="{escape_label(decision)}"}} 1',
+        "# HELP mb3r_source_gate_decision_code Numeric code for the raw Sheaft gate decision.",
+        "# TYPE mb3r_source_gate_decision_code gauge",
+        f'mb3r_source_gate_decision_code{{decision="{escape_label(source_decision)}"}} {DECISION_CODES.get(source_decision, 4)}',
         "# HELP mb3r_posture_score Current weighted overall posture score.",
         "# TYPE mb3r_posture_score gauge",
         f"mb3r_posture_score {posture}",

@@ -26,7 +26,6 @@ $scenarioEndpoints = @{
   )
   core            = @(
     'frontend:GET /api/products',
-    'frontend:GET /api/recommendations',
     'frontend:GET /api/cart',
     'frontend:POST /api/checkout'
   )

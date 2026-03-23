@@ -13,6 +13,25 @@ services:
     ports:
       - "14318:4318"
 
+  mb3r-snapshot-sanitizer:
+    image: python:3.12-alpine3.20
+    container_name: mb3r-snapshot-sanitizer
+    restart: unless-stopped
+    working_dir: /app
+    command: ["python", "/app/sanitizer.py"]
+    environment:
+      - SANITIZER_INPUT_PATH=/mb3r/out/artifacts/latest-snapshot.json
+      - SANITIZER_OUTPUT_PATH=/mb3r/out/artifacts/latest-snapshot-sanitized.json
+      - SANITIZER_CONTRACT_PATH=/etc/mb3r/sanitizer/endpoint-dependencies.json
+      - SANITIZER_POLL_INTERVAL=2
+    volumes:
+      - ./mb3r/sanitizer:/app:ro
+      - ./mb3r/config/sanitizer/endpoint-dependencies.json:/etc/mb3r/sanitizer/endpoint-dependencies.json:ro
+      - ./mb3r/out:/mb3r/out
+    depends_on:
+      bering:
+        condition: service_started
+
   sheaft:
     image: ghcr.io/mb3r-lab/sheaft@sha256:eb1ebf9d96c55c5bb29e226e07496d152eb3a66b52dd9d34ba799fa4aef70624
     container_name: sheaft
@@ -26,7 +45,7 @@ services:
     ports:
       - "19080:8080"
     depends_on:
-      bering:
+      mb3r-snapshot-sanitizer:
         condition: service_started
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8080/readyz || exit 1"]
@@ -47,10 +66,12 @@ services:
       - EXPORTER_POLL_INTERVAL=5
       - EXPORTER_OUTPUT_DIR=/mb3r/out/reports
       - EXPORTER_ENDPOINT_CONFIG=/etc/mb3r/exporter/expected-endpoints.json
+      - EXPORTER_POLICY_CONFIG=/etc/mb3r/exporter/policy.json
       - EXPORTER_PRIMARY_PROFILE=steady-state
     volumes:
       - ./mb3r/exporter:/app:ro
       - ./mb3r/config/exporter/expected-endpoints.json:/etc/mb3r/exporter/expected-endpoints.json:ro
+      - ./mb3r/config/exporter/policy.json:/etc/mb3r/exporter/policy.json:ro
       - ./mb3r/out:/mb3r/out
     ports:
       - "19113:9113"
@@ -63,6 +84,22 @@ services:
       interval: 5s
       timeout: 5s
       retries: 24
+
+  mb3r-probe:
+    image: python:3.12-alpine3.20
+    container_name: mb3r-probe
+    restart: unless-stopped
+    working_dir: /app
+    command: ["python", "/app/probe.py"]
+    environment:
+      - MB3R_PROBE_BASE_URL=http://frontend-proxy:8080
+      - MB3R_PROBE_INTERVAL=15
+      - MB3R_PROBE_TIMEOUT=5
+    volumes:
+      - ./mb3r/probe:/app:ro
+    depends_on:
+      frontend-proxy:
+        condition: service_started
 
   otel-collector:
     command:

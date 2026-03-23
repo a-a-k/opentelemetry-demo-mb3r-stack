@@ -13,11 +13,15 @@ receivers:
       scrape_configs:
         - job_name: "mb3r-bering"
           metrics_path: /metrics
+          scrape_interval: 5s
+          scrape_timeout: 4s
           static_configs:
             - targets:
                 - ${env:BERING_METRICS_TARGET}
         - job_name: "mb3r-exporter"
           metrics_path: /metrics
+          scrape_interval: 5s
+          scrape_timeout: 4s
           static_configs:
             - targets:
                 - ${env:MB3R_EXPORTER_METRICS_TARGET}

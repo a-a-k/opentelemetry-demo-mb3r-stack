@@ -1,0 +1,11 @@
+{
+  "mode": "warn",
+  "endpoint_threshold": 0.35,
+  "aggregate_threshold": 0.6,
+  "cross_profile_aggregate_threshold": 0.7,
+  "profile_aggregate_thresholds": {
+    "steady-state": 0.88,
+    "single-service-fault": 0.45,
+    "correlated-service-fault": 0.55
+  }
+}

@@ -457,13 +457,53 @@
       "fieldConfig": {
         "defaults": {
           "color": {
-            "mode": "palette-classic"
+            "mode": "thresholds"
+          },
+          "mappings": [
+            {
+              "options": {
+                "0": {
+                  "text": "pass"
+                },
+                "1": {
+                  "text": "warn"
+                },
+                "2": {
+                  "text": "fail"
+                },
+                "3": {
+                  "text": "error"
+                }
+              },
+              "type": "value"
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 1
+              },
+              {
+                "color": "red",
+                "value": 2
+              },
+              {
+                "color": "dark-red",
+                "value": 3
+              }
+            ]
           }
         }
       },
       "gridPos": {
         "h": 9,
-        "w": 12,
+        "w": 6,
         "x": 12,
         "y": 22
       },
@@ -478,17 +518,51 @@
       },
       "targets": [
         {
-          "expr": "mb3r_gate_decision_code",
-          "legendFormat": "{{decision}}",
+          "expr": "max without (decision) (mb3r_gate_decision_code)",
+          "legendFormat": "gate",
           "refId": "A"
+        }
+      ],
+      "title": "Gate Timeline",
+      "type": "state-timeline"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "webstore-metrics"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "max": 4,
+          "min": 0
+        }
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 6,
+        "x": 18,
+        "y": 22
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
         },
+        "tooltip": {
+          "mode": "single"
+        }
+      },
+      "targets": [
         {
           "expr": "mb3r_endpoints_below_threshold",
           "legendFormat": "{{profile}} below threshold",
           "refId": "B"
         }
       ],
-      "title": "Gate and Threshold Signals",
+      "title": "Threshold Breaches by Profile",
       "type": "timeseries"
     }
   ],

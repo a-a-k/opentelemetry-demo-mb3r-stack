@@ -2,12 +2,12 @@ schema_version: "1.0"
 listen: ":8080"
 
 artifact:
-  path: /mb3r/out/artifacts/latest-snapshot.json
+  path: /mb3r/out/artifacts/latest-snapshot-sanitized.json
   mode: file
 
 analysis_file: /etc/mb3r/sheaft/analysis.yaml
 
-poll_interval: 10s
+poll_interval: 5s
 watch_fs: true
 watch_polling: true
 

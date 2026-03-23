@@ -1,0 +1,23 @@
+{
+  "endpoint_dependencies": {
+    "frontend:GET /api/products": [
+      "frontend",
+      "product-catalog"
+    ],
+    "frontend:GET /api/recommendations": [
+      "frontend",
+      "recommendation"
+    ],
+    "frontend:GET /api/cart": [
+      "frontend",
+      "cart"
+    ],
+    "frontend:POST /api/checkout": [
+      "frontend",
+      "checkout",
+      "cart",
+      "payment",
+      "shipping"
+    ]
+  }
+}
