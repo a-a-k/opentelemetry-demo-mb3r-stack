@@ -19,6 +19,11 @@ OUTPUT_DIR = Path(os.environ.get("EXPORTER_OUTPUT_DIR", "/tmp"))
 EXPORTER_ENDPOINT_CONFIG = os.environ.get("EXPORTER_ENDPOINT_CONFIG", "")
 EXPORTER_POLICY_CONFIG = os.environ.get("EXPORTER_POLICY_CONFIG", "")
 EXPORTER_PRIMARY_PROFILE = os.environ.get("EXPORTER_PRIMARY_PROFILE", "steady-state")
+EXPORTER_SNAPSHOT_PATH = Path(os.environ.get("EXPORTER_SNAPSHOT_PATH", "/mb3r/out/artifacts/latest-snapshot.json"))
+EXPORTER_SNAPSHOT_HISTORY_DIR = Path(
+    os.environ.get("EXPORTER_SNAPSHOT_HISTORY_DIR", "/mb3r/out/artifacts/snapshots")
+)
+EXPORTER_DEPENDENCY_CONFIG = os.environ.get("EXPORTER_DEPENDENCY_CONFIG", "")
 
 
 DECISION_CODES = {
@@ -104,6 +109,25 @@ def load_expected_endpoint_weights():
     return normalize_weights(DEFAULT_EXPECTED_ENDPOINT_WEIGHTS)
 
 
+def load_relevant_services():
+    relevant = set()
+    if EXPORTER_DEPENDENCY_CONFIG:
+        try:
+            payload = json.loads(Path(EXPORTER_DEPENDENCY_CONFIG).read_text(encoding="utf-8"))
+            dependencies = payload.get("endpoint_dependencies", payload)
+            if isinstance(dependencies, dict):
+                for endpoint_id, services in dependencies.items():
+                    if str(endpoint_id) not in DEFAULT_EXPECTED_ENDPOINT_WEIGHTS:
+                        continue
+                    if isinstance(services, list):
+                        for service in services:
+                            if service:
+                                relevant.add(str(service))
+        except (OSError, json.JSONDecodeError, TypeError, ValueError):
+            pass
+    return relevant
+
+
 def write_json(path: Path, payload):
     path.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False, dir=path.parent) as tmp:
@@ -151,14 +175,16 @@ class State:
         self.last_success_ts = 0.0
         self.status = {}
         self.report = {}
+        self.snapshot_context = {}
 
-    def update_success(self, status, report):
+    def update_success(self, status, report, snapshot_context):
         with self.lock:
             self.ready = True
             self.last_error = ""
             self.last_success_ts = now_epoch()
             self.status = status
             self.report = report
+            self.snapshot_context = snapshot_context
 
     def update_error(self, err: Exception):
         with self.lock:
@@ -172,12 +198,83 @@ class State:
                 "last_success_ts": self.last_success_ts,
                 "status": self.status,
                 "report": self.report,
+                "snapshot_context": self.snapshot_context,
             }
 
 
 STATE = State()
 EXPECTED_ENDPOINT_WEIGHTS = load_expected_endpoint_weights()
 POLICY = load_policy()
+RELEVANT_SERVICES = load_relevant_services()
+
+
+def item_ids(items):
+    ids = set()
+    for item in items or []:
+        value = None
+        if isinstance(item, dict):
+            value = item.get("id") or item.get("endpoint_id")
+        elif item:
+            value = item
+        if value:
+            ids.add(str(value))
+    return ids
+
+
+def load_snapshot_context():
+    context = {
+        "current_snapshot_id": "",
+        "previous_snapshot_id": "",
+        "missing_services": [],
+        "missing_endpoints": [],
+    }
+
+    try:
+        current = json.loads(EXPORTER_SNAPSHOT_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return context
+
+    context["current_snapshot_id"] = str(current.get("snapshot_id") or "")
+    current_services = item_ids((current.get("model") or {}).get("services"))
+    current_endpoints = item_ids((current.get("model") or {}).get("endpoints"))
+
+    previous = None
+    try:
+        files = sorted(EXPORTER_SNAPSHOT_HISTORY_DIR.glob("*.json"), key=lambda path: path.stat().st_mtime, reverse=True)
+    except OSError:
+        files = []
+
+    for path in files:
+        try:
+            candidate = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+
+        candidate_id = str(candidate.get("snapshot_id") or "")
+        if candidate_id and candidate_id != context["current_snapshot_id"]:
+            previous = candidate
+            break
+
+    if not previous:
+        return context
+
+    context["previous_snapshot_id"] = str(previous.get("snapshot_id") or "")
+    previous_services = item_ids((previous.get("model") or {}).get("services"))
+    previous_endpoints = item_ids((previous.get("model") or {}).get("endpoints"))
+
+    missing_services = previous_services - current_services
+    if RELEVANT_SERVICES:
+        missing_services = {service for service in missing_services if service in RELEVANT_SERVICES}
+
+    missing_endpoints = {
+        endpoint_id
+        for endpoint_id in (previous_endpoints - current_endpoints)
+        if endpoint_id in EXPECTED_ENDPOINT_WEIGHTS
+    }
+
+    context["missing_services"] = sorted(missing_services)
+    context["missing_endpoints"] = sorted(missing_endpoints)
+    return context
 
 
 def normalized_profiles(report_payload):
@@ -354,6 +451,7 @@ def metrics_payload():
         posture = 0.0
     decision = modeled_decision(profiles, posture, source_decision)
     decision_code = DECISION_CODES.get(decision, 4)
+    snapshot_context = state.get("snapshot_context") or {}
 
     generated_at = status.get("generated_at") or report.get("generated_at")
     generated_ts = parse_timestamp(generated_at)
@@ -384,7 +482,35 @@ def metrics_payload():
         "# HELP mb3r_last_success_timestamp_seconds Unix timestamp of the last successful poll.",
         "# TYPE mb3r_last_success_timestamp_seconds gauge",
         f"mb3r_last_success_timestamp_seconds {state['last_success_ts']}",
+        "# HELP mb3r_snapshot_missing_relevant_services_count Count of posture-relevant services missing vs previous snapshot.",
+        "# TYPE mb3r_snapshot_missing_relevant_services_count gauge",
+        f"mb3r_snapshot_missing_relevant_services_count {len(snapshot_context.get('missing_services', []))}",
+        "# HELP mb3r_snapshot_missing_target_endpoints_count Count of target journeys missing vs previous snapshot.",
+        "# TYPE mb3r_snapshot_missing_target_endpoints_count gauge",
+        f"mb3r_snapshot_missing_target_endpoints_count {len(snapshot_context.get('missing_endpoints', []))}",
     ]
+
+    missing_services = snapshot_context.get("missing_services", [])
+    if missing_services:
+        lines.extend(
+            [
+                "# HELP mb3r_snapshot_missing_relevant_service_info Info metric for posture-relevant services missing vs previous snapshot.",
+                "# TYPE mb3r_snapshot_missing_relevant_service_info gauge",
+            ]
+        )
+        for service in missing_services:
+            lines.append(f'mb3r_snapshot_missing_relevant_service_info{{service="{escape_label(service)}"}} 1')
+
+    missing_endpoints = snapshot_context.get("missing_endpoints", [])
+    if missing_endpoints:
+        lines.extend(
+            [
+                "# HELP mb3r_snapshot_missing_target_endpoint_info Info metric for target journeys missing vs previous snapshot.",
+                "# TYPE mb3r_snapshot_missing_target_endpoint_info gauge",
+            ]
+        )
+        for endpoint_id in missing_endpoints:
+            lines.append(f'mb3r_snapshot_missing_target_endpoint_info{{endpoint="{escape_label(endpoint_id)}"}} 1')
 
     for profile in profiles:
         profile_name = profile.get("name", "default")
@@ -436,9 +562,11 @@ def poll_loop():
         try:
             status = json_get(f"{SHEAFT_BASE_URL}/status")
             report = json_get(f"{SHEAFT_BASE_URL}/current-report")
+            snapshot_context = load_snapshot_context()
             write_json(OUTPUT_DIR / "status.json", status)
             write_json(OUTPUT_DIR / "current-report.json", report)
-            STATE.update_success(status, report)
+            write_json(OUTPUT_DIR / "snapshot-context.json", snapshot_context)
+            STATE.update_success(status, report, snapshot_context)
         except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, json.JSONDecodeError, OSError) as err:
             STATE.update_error(err)
         time.sleep(POLL_INTERVAL)

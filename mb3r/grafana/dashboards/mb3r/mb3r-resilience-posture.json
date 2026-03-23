@@ -65,8 +65,8 @@
         }
       },
       "gridPos": {
-        "h": 8,
-        "w": 6,
+        "h": 6,
+        "w": 4,
         "x": 0,
         "y": 5
       },
@@ -145,9 +145,9 @@
         }
       },
       "gridPos": {
-        "h": 8,
-        "w": 6,
-        "x": 6,
+        "h": 6,
+        "w": 4,
+        "x": 4,
         "y": 5
       },
       "options": {
@@ -203,9 +203,9 @@
         }
       },
       "gridPos": {
-        "h": 8,
-        "w": 6,
-        "x": 12,
+        "h": 6,
+        "w": 4,
+        "x": 16,
         "y": 5
       },
       "options": {
@@ -261,9 +261,9 @@
         }
       },
       "gridPos": {
-        "h": 8,
-        "w": 6,
-        "x": 18,
+        "h": 6,
+        "w": 4,
+        "x": 20,
         "y": 5
       },
       "options": {
@@ -286,6 +286,65 @@
         }
       ],
       "title": "Bering Snapshot Age",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "webstore-metrics"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "fixedColor": "red",
+            "mode": "fixed"
+          },
+          "noValue": "No removals",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              }
+            ]
+          }
+        }
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 8,
+        "x": 8,
+        "y": 5
+      },
+      "options": {
+        "colorMode": "background_solid",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "values": false
+        },
+        "textMode": "name"
+      },
+      "targets": [
+        {
+          "expr": "mb3r_snapshot_missing_relevant_service_info",
+          "instant": true,
+          "legendFormat": "service / {{service}}",
+          "refId": "A"
+        },
+        {
+          "expr": "mb3r_snapshot_missing_target_endpoint_info",
+          "instant": true,
+          "legendFormat": "journey / {{endpoint}}",
+          "refId": "B"
+        }
+      ],
+      "title": "Recent Model Removals",
       "type": "stat"
     },
     {
@@ -324,7 +383,7 @@
         "h": 9,
         "w": 12,
         "x": 0,
-        "y": 13
+        "y": 11
       },
       "options": {
         "displayMode": "gradient",
@@ -383,7 +442,7 @@
         "h": 9,
         "w": 12,
         "x": 12,
-        "y": 13
+        "y": 11
       },
       "options": {
         "displayMode": "gradient",
@@ -423,7 +482,7 @@
         "h": 9,
         "w": 12,
         "x": 0,
-        "y": 22
+        "y": 20
       },
       "options": {
         "legend": {
@@ -505,7 +564,7 @@
         "h": 9,
         "w": 6,
         "x": 12,
-        "y": 22
+        "y": 20
       },
       "options": {
         "legend": {
@@ -544,7 +603,7 @@
         "h": 9,
         "w": 6,
         "x": 18,
-        "y": 22
+        "y": 20
       },
       "options": {
         "legend": {
@@ -583,5 +642,5 @@
   "timezone": "browser",
   "title": "MB3R Resilience Posture",
   "uid": "mb3r-resilience",
-  "version": 3
+  "version": 4
 }
