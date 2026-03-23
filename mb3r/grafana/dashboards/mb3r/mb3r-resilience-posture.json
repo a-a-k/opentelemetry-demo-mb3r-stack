@@ -26,7 +26,7 @@
         "y": 0
       },
       "options": {
-        "content": "## MB3R Resilience Posture\nThis is a **predicted resilience posture** view built from Bering-discovered topology and Sheaft analysis. It is not a raw health panel.\n\n### Read It In This Order\n1. **Gate Decision**: current Sheaft decision for the latest report. Higher severity is worse: `pass -> warn -> fail -> error`.\n2. **Overall Posture**: cross-profile weighted posture score from `0` to `1`. Higher is better.\n3. **Report Age / Snapshot Age**: freshness indicators. Lower is better.\n4. **Simulated Availability by Profile**: `steady-state` is the baseline profile. The fault profiles are intentionally lower because they simulate degraded conditions.\n5. **Journey Availability by Profile**: the four target frontend journeys. `0` means the journey is currently missing or broken in the active trace-derived model.\n\n### Color Semantics\n- For posture and availability panels: **green is better, red is worse**.\n- For age panels: **green is fresher, red is staler**.\n\nRaw inputs remain available at `http://localhost:14318/metrics`, `http://localhost:19080/status`, and `http://localhost:19080/current-report`.",
+        "content": "## MB3R Resilience Posture\nThis is a **predicted resilience posture** view built from Bering-discovered topology and Sheaft analysis. It is not a raw health panel.\n\n### Read It In This Order\n1. **Policy Verdict**: current policy result for the latest report. Higher severity is worse: `pass -> warn -> fail -> error`.\n2. **Overall Posture**: cross-profile weighted posture score from `0` to `1`. Higher is better.\n3. **Report Age / Snapshot Age**: freshness indicators. Lower is better.\n4. **Simulated Availability by Profile**: `steady-state` is the baseline profile. The fault profiles are intentionally lower because they simulate degraded conditions.\n5. **Journey Availability by Profile**: the four target frontend journeys. `0` means the journey is currently missing or broken in the active trace-derived model.\n\n### Color Semantics\n- For posture and availability panels: **green is better, red is worse**.\n- For age panels: **green is fresher, red is staler**.\n\nRaw inputs remain available at `http://localhost:14318/metrics`, `http://localhost:19080/status`, and `http://localhost:19080/current-report`.",
         "mode": "markdown"
       },
       "title": "What This Shows",
@@ -169,7 +169,7 @@
           "refId": "A"
         }
       ],
-      "title": "Gate Decision",
+      "title": "Policy Verdict",
       "type": "stat"
     },
     {
@@ -523,7 +523,7 @@
           "refId": "A"
         }
       ],
-      "title": "Gate Timeline",
+      "title": "Policy Verdict Timeline",
       "type": "state-timeline"
     },
     {
@@ -583,5 +583,5 @@
   "timezone": "browser",
   "title": "MB3R Resilience Posture",
   "uid": "mb3r-resilience",
-  "version": 2
+  "version": 3
 }

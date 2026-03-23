@@ -85,7 +85,7 @@ The intent is to keep Kafka and other async edges out of the immediate-response 
 
 The MB3R dashboard is provisioned additively into the existing Grafana instance and shows:
 
-- current gate decision
+- current policy verdict
 - current weighted posture score
 - Sheaft report freshness
 - Bering snapshot freshness
@@ -103,8 +103,8 @@ The bridge exporter is intentionally Astronomy Shop aware:
 
 Read the panels in this order:
 
-1. `Gate Decision`
-   Current Sheaft gate result for the latest report.
+1. `Policy Verdict`
+   Current policy result for the latest report.
    Severity order is `pass -> warn -> fail -> error`.
 
 2. `Overall Posture`
