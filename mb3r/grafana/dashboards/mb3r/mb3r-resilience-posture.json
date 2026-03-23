@@ -584,10 +584,11 @@
       "options": {
         "legend": {
           "displayMode": "list",
-          "placement": "bottom"
+          "placement": "bottom",
+          "showLegend": false
         },
         "rowHeight": 0.9,
-        "showValue": "never",
+        "showValue": "always",
         "tooltip": {
           "mode": "single"
         }
@@ -613,6 +614,28 @@
             "mode": "thresholds"
           },
           "max": 4,
+          "mappings": [
+            {
+              "options": {
+                "0": {
+                  "text": "0"
+                },
+                "1": {
+                  "text": "1"
+                },
+                "2": {
+                  "text": "2"
+                },
+                "3": {
+                  "text": "3"
+                },
+                "4": {
+                  "text": "4"
+                }
+              },
+              "type": "value"
+            }
+          ],
           "min": 0,
           "thresholds": {
             "mode": "absolute",
@@ -650,7 +673,8 @@
       "options": {
         "legend": {
           "displayMode": "list",
-          "placement": "bottom"
+          "placement": "bottom",
+          "showLegend": false
         },
         "rowHeight": 0.8,
         "showValue": "always",
@@ -686,5 +710,5 @@
   "timezone": "browser",
   "title": "MB3R Resilience Posture",
   "uid": "mb3r-resilience",
-  "version": 7
+  "version": 8
 }
