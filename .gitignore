@@ -39,6 +39,7 @@ src/frontend/cypress/videos
 src/frontend/cypress/screenshots
 src/shipping/target/
 test/tracetesting/tracetesting-vars.yaml
+mb3r/docs/positioning-note.md
 
 # Ignore copied/generated protobuf files
 /src/accounting/src/protos/
