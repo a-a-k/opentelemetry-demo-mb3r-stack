@@ -66,12 +66,14 @@ services:
       - EXPORTER_POLL_INTERVAL=5
       - EXPORTER_OUTPUT_DIR=/mb3r/out/reports
       - EXPORTER_ENDPOINT_CONFIG=/etc/mb3r/exporter/expected-endpoints.json
+      - EXPORTER_SERVICE_INVENTORY_CONFIG=/etc/mb3r/exporter/service-inventory.json
       - EXPORTER_DEPENDENCY_CONFIG=/etc/mb3r/exporter/endpoint-dependencies.json
       - EXPORTER_POLICY_CONFIG=/etc/mb3r/exporter/policy.json
       - EXPORTER_PRIMARY_PROFILE=steady-state
     volumes:
       - ./mb3r/exporter:/app:ro
       - ./mb3r/config/exporter/expected-endpoints.json:/etc/mb3r/exporter/expected-endpoints.json:ro
+      - ./mb3r/config/exporter/service-inventory.json:/etc/mb3r/exporter/service-inventory.json:ro
       - ./mb3r/config/sanitizer/endpoint-dependencies.json:/etc/mb3r/exporter/endpoint-dependencies.json:ro
       - ./mb3r/config/exporter/policy.json:/etc/mb3r/exporter/policy.json:ro
       - ./mb3r/out:/mb3r/out

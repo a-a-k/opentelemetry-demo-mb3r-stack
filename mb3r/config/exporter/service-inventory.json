@@ -1,0 +1,21 @@
+{
+  "services": [
+    "accounting",
+    "ad",
+    "cart",
+    "checkout",
+    "currency",
+    "email",
+    "fraud-detection",
+    "frontend",
+    "frontend-proxy",
+    "image-provider",
+    "load-generator",
+    "payment",
+    "product-catalog",
+    "product-reviews",
+    "quote",
+    "recommendation",
+    "shipping"
+  ]
+}

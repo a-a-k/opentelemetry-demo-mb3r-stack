@@ -17,6 +17,7 @@ SHEAFT_BASE_URL = os.environ.get("SHEAFT_BASE_URL", "http://sheaft:8080").rstrip
 POLL_INTERVAL = float(os.environ.get("EXPORTER_POLL_INTERVAL", "5"))
 OUTPUT_DIR = Path(os.environ.get("EXPORTER_OUTPUT_DIR", "/tmp"))
 EXPORTER_ENDPOINT_CONFIG = os.environ.get("EXPORTER_ENDPOINT_CONFIG", "")
+EXPORTER_SERVICE_INVENTORY_CONFIG = os.environ.get("EXPORTER_SERVICE_INVENTORY_CONFIG", "")
 EXPORTER_POLICY_CONFIG = os.environ.get("EXPORTER_POLICY_CONFIG", "")
 EXPORTER_PRIMARY_PROFILE = os.environ.get("EXPORTER_PRIMARY_PROFILE", "steady-state")
 EXPORTER_SNAPSHOT_PATH = Path(os.environ.get("EXPORTER_SNAPSHOT_PATH", "/mb3r/out/artifacts/latest-snapshot.json"))
@@ -42,6 +43,29 @@ DEFAULT_EXPECTED_ENDPOINT_WEIGHTS = {
     "frontend:POST /api/checkout": 0.25,
 }
 
+DEFAULT_JOURNEY_METADATA = {
+    "frontend:GET /api/products": {
+        "key": "browse-products",
+        "name": "Browse Products",
+        "description": "Browse the storefront product catalog.",
+    },
+    "frontend:GET /api/recommendations": {
+        "key": "view-recommendations",
+        "name": "View Recommendations",
+        "description": "Load personalized storefront recommendations.",
+    },
+    "frontend:GET /api/cart": {
+        "key": "view-cart",
+        "name": "View Cart",
+        "description": "Load the active storefront cart.",
+    },
+    "frontend:POST /api/checkout": {
+        "key": "complete-checkout",
+        "name": "Complete Checkout",
+        "description": "Submit the storefront checkout flow.",
+    },
+}
+
 DEFAULT_POLICY = {
     "mode": "warn",
     "endpoint_threshold": 0.35,
@@ -52,6 +76,26 @@ DEFAULT_POLICY = {
         "single-service-fault": 0.45,
         "correlated-service-fault": 0.55,
     },
+}
+
+DEFAULT_MONITORED_SERVICES = {
+    "accounting",
+    "ad",
+    "cart",
+    "checkout",
+    "currency",
+    "email",
+    "fraud-detection",
+    "frontend",
+    "frontend-proxy",
+    "image-provider",
+    "load-generator",
+    "payment",
+    "product-catalog",
+    "product-reviews",
+    "quote",
+    "recommendation",
+    "shipping",
 }
 
 
@@ -109,6 +153,72 @@ def load_expected_endpoint_weights():
     return normalize_weights(DEFAULT_EXPECTED_ENDPOINT_WEIGHTS)
 
 
+def default_journey_metadata(endpoint_id):
+    if endpoint_id in DEFAULT_JOURNEY_METADATA:
+        return dict(DEFAULT_JOURNEY_METADATA[endpoint_id])
+
+    suffix = endpoint_id.split(":", 1)[-1].strip()
+    return {
+        "key": suffix.lower().replace("/", "-").replace(" ", "-").replace("{", "").replace("}", ""),
+        "name": suffix,
+        "description": "",
+    }
+
+
+def load_journey_metadata(expected_weights):
+    metadata = {endpoint_id: default_journey_metadata(endpoint_id) for endpoint_id in expected_weights}
+
+    if EXPORTER_ENDPOINT_CONFIG:
+        try:
+            payload = json.loads(Path(EXPORTER_ENDPOINT_CONFIG).read_text(encoding="utf-8"))
+            if isinstance(payload, dict):
+                journeys = payload.get("journeys") or payload.get("journey_metadata") or {}
+                if isinstance(journeys, dict):
+                    for endpoint_id in expected_weights:
+                        raw = journeys.get(endpoint_id)
+                        if not isinstance(raw, dict):
+                            continue
+                        current = metadata[endpoint_id]
+                        key = str(raw.get("key") or current["key"])
+                        name = str(raw.get("name") or current["name"])
+                        description = str(raw.get("description") or current["description"])
+                        metadata[endpoint_id] = {
+                            "key": key,
+                            "name": name,
+                            "description": description,
+                        }
+        except (OSError, json.JSONDecodeError, TypeError, ValueError):
+            pass
+
+    return metadata
+
+
+def load_journey_dependencies(expected_weights):
+    dependencies_by_journey = {endpoint_id: [] for endpoint_id in expected_weights}
+    if EXPORTER_DEPENDENCY_CONFIG:
+        try:
+            payload = json.loads(Path(EXPORTER_DEPENDENCY_CONFIG).read_text(encoding="utf-8"))
+            dependencies = payload.get("endpoint_dependencies", payload)
+            if isinstance(dependencies, dict):
+                for endpoint_id in expected_weights:
+                    services = dependencies.get(endpoint_id)
+                    if isinstance(services, list):
+                        cleaned = []
+                        seen = set()
+                        for service in services:
+                            if not service:
+                                continue
+                            service_name = str(service)
+                            if service_name in seen:
+                                continue
+                            seen.add(service_name)
+                            cleaned.append(service_name)
+                        dependencies_by_journey[endpoint_id] = cleaned
+        except (OSError, json.JSONDecodeError, TypeError, ValueError):
+            pass
+    return dependencies_by_journey
+
+
 def load_relevant_services():
     relevant = set()
     if EXPORTER_DEPENDENCY_CONFIG:
@@ -126,6 +236,26 @@ def load_relevant_services():
         except (OSError, json.JSONDecodeError, TypeError, ValueError):
             pass
     return relevant
+
+
+def load_monitored_services():
+    monitored = set()
+    if EXPORTER_SERVICE_INVENTORY_CONFIG:
+        try:
+            payload = json.loads(Path(EXPORTER_SERVICE_INVENTORY_CONFIG).read_text(encoding="utf-8"))
+            services = payload.get("services", payload) if isinstance(payload, dict) else payload
+            if isinstance(services, list):
+                for service in services:
+                    service_id = ""
+                    if isinstance(service, dict):
+                        service_id = str(service.get("id") or service.get("name") or "").strip()
+                    elif service:
+                        service_id = str(service).strip()
+                    if service_id:
+                        monitored.add(service_id)
+        except (OSError, json.JSONDecodeError, TypeError, ValueError):
+            pass
+    return monitored or set(DEFAULT_MONITORED_SERVICES)
 
 
 def write_json(path: Path, payload):
@@ -176,8 +306,19 @@ class State:
         self.status = {}
         self.report = {}
         self.snapshot_context = {}
+        self.snapshot_summary = {}
 
-    def update_success(self, status, report, snapshot_context):
+    def previous_snapshot_summary(self):
+        with self.lock:
+            if not self.snapshot_summary:
+                return {}
+            return {
+                "snapshot_id": self.snapshot_summary.get("snapshot_id", ""),
+                "services": set(self.snapshot_summary.get("services", set())),
+                "endpoints": set(self.snapshot_summary.get("endpoints", set())),
+            }
+
+    def update_success(self, status, report, snapshot_context, snapshot_summary):
         with self.lock:
             self.ready = True
             self.last_error = ""
@@ -185,6 +326,7 @@ class State:
             self.status = status
             self.report = report
             self.snapshot_context = snapshot_context
+            self.snapshot_summary = snapshot_summary
 
     def update_error(self, err: Exception):
         with self.lock:
@@ -204,8 +346,30 @@ class State:
 
 STATE = State()
 EXPECTED_ENDPOINT_WEIGHTS = load_expected_endpoint_weights()
+JOURNEY_METADATA = load_journey_metadata(EXPECTED_ENDPOINT_WEIGHTS)
+JOURNEY_DEPENDENCIES = load_journey_dependencies(EXPECTED_ENDPOINT_WEIGHTS)
 POLICY = load_policy()
 RELEVANT_SERVICES = load_relevant_services()
+MONITORED_SERVICES = load_monitored_services()
+
+
+def journeys_for_service(service_name):
+    journeys = []
+    seen = set()
+    for endpoint_id, dependencies in JOURNEY_DEPENDENCIES.items():
+        if service_name not in dependencies:
+            continue
+        journey = JOURNEY_METADATA.get(endpoint_id, default_journey_metadata(endpoint_id))
+        journey_name = journey["name"]
+        if journey_name in seen:
+            continue
+        seen.add(journey_name)
+        journeys.append(journey_name)
+    return journeys
+
+
+def service_impact_label(service_name):
+    return "target-journey" if service_name in RELEVANT_SERVICES else "observability-only"
 
 
 def item_ids(items):
@@ -221,57 +385,57 @@ def item_ids(items):
     return ids
 
 
-def load_snapshot_context():
+def load_snapshot_context(previous_snapshot=None):
     context = {
         "current_snapshot_id": "",
         "previous_snapshot_id": "",
+        "current_missing_relevant_services": [],
         "current_missing_services": [],
         "current_missing_endpoints": [],
+        "recent_removed_relevant_services": [],
         "recent_removed_services": [],
         "recent_removed_endpoints": [],
+    }
+    summary = {
+        "snapshot_id": "",
+        "services": set(),
+        "endpoints": set(),
     }
 
     try:
         current = json.loads(EXPORTER_SNAPSHOT_PATH.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
-        return context
+        return context, summary
 
     context["current_snapshot_id"] = str(current.get("snapshot_id") or "")
     current_services = item_ids((current.get("model") or {}).get("services"))
     current_endpoints = item_ids((current.get("model") or {}).get("endpoints"))
+    summary = {
+        "snapshot_id": context["current_snapshot_id"],
+        "services": current_services,
+        "endpoints": current_endpoints,
+    }
     if RELEVANT_SERVICES:
-        context["current_missing_services"] = sorted(RELEVANT_SERVICES - current_services)
+        context["current_missing_relevant_services"] = sorted(RELEVANT_SERVICES - current_services)
+    if MONITORED_SERVICES:
+        context["current_missing_services"] = sorted(MONITORED_SERVICES - current_services)
     context["current_missing_endpoints"] = sorted(
         endpoint_id for endpoint_id in EXPECTED_ENDPOINT_WEIGHTS if endpoint_id not in current_endpoints
     )
 
-    previous = None
-    try:
-        files = sorted(EXPORTER_SNAPSHOT_HISTORY_DIR.glob("*.json"), key=lambda path: path.stat().st_mtime, reverse=True)
-    except OSError:
-        files = []
+    previous_snapshot = previous_snapshot or {}
+    previous_snapshot_id = str(previous_snapshot.get("snapshot_id") or "")
+    previous_services = set(previous_snapshot.get("services") or set())
+    previous_endpoints = set(previous_snapshot.get("endpoints") or set())
+    if not previous_snapshot_id or previous_snapshot_id == context["current_snapshot_id"]:
+        return context, summary
 
-    for path in files:
-        try:
-            candidate = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            continue
-
-        candidate_id = str(candidate.get("snapshot_id") or "")
-        if candidate_id and candidate_id != context["current_snapshot_id"]:
-            previous = candidate
-            break
-
-    if not previous:
-        return context
-
-    context["previous_snapshot_id"] = str(previous.get("snapshot_id") or "")
-    previous_services = item_ids((previous.get("model") or {}).get("services"))
-    previous_endpoints = item_ids((previous.get("model") or {}).get("endpoints"))
+    context["previous_snapshot_id"] = previous_snapshot_id
 
     missing_services = previous_services - current_services
-    if RELEVANT_SERVICES:
-        missing_services = {service for service in missing_services if service in RELEVANT_SERVICES}
+    relevant_missing_services = {service for service in missing_services if service in RELEVANT_SERVICES}
+    if MONITORED_SERVICES:
+        missing_services = {service for service in missing_services if service in MONITORED_SERVICES}
 
     missing_endpoints = {
         endpoint_id
@@ -279,9 +443,10 @@ def load_snapshot_context():
         if endpoint_id in EXPECTED_ENDPOINT_WEIGHTS
     }
 
+    context["recent_removed_relevant_services"] = sorted(relevant_missing_services)
     context["recent_removed_services"] = sorted(missing_services)
     context["recent_removed_endpoints"] = sorted(missing_endpoints)
-    return context
+    return context, summary
 
 
 def normalized_profiles(report_payload):
@@ -326,9 +491,14 @@ def modeled_profiles(report_payload):
             source = by_endpoint.get(endpoint_id, {})
             availability = float(source.get("availability", 0.0) or 0.0)
             threshold = float(source.get("threshold", POLICY["endpoint_threshold"]) or POLICY["endpoint_threshold"])
+            journey = JOURNEY_METADATA.get(endpoint_id, default_journey_metadata(endpoint_id))
             endpoint_results.append(
                 {
                     "endpoint_id": endpoint_id,
+                    "journey_id": endpoint_id,
+                    "journey_key": journey["key"],
+                    "journey": journey["name"],
+                    "journey_description": journey["description"],
                     "availability": availability,
                     "threshold": threshold,
                     "weight": weight,
@@ -491,7 +661,10 @@ def metrics_payload():
         f"mb3r_last_success_timestamp_seconds {state['last_success_ts']}",
         "# HELP mb3r_snapshot_missing_relevant_services_count Count of posture-relevant services missing from the current model.",
         "# TYPE mb3r_snapshot_missing_relevant_services_count gauge",
-        f"mb3r_snapshot_missing_relevant_services_count {len(snapshot_context.get('current_missing_services', []))}",
+        f"mb3r_snapshot_missing_relevant_services_count {len(snapshot_context.get('current_missing_relevant_services', []))}",
+        "# HELP mb3r_snapshot_missing_monitored_services_count Count of monitored services missing from the current model.",
+        "# TYPE mb3r_snapshot_missing_monitored_services_count gauge",
+        f"mb3r_snapshot_missing_monitored_services_count {len(snapshot_context.get('current_missing_services', []))}",
         "# HELP mb3r_snapshot_missing_target_endpoints_count Count of target journeys missing from the current model.",
         "# TYPE mb3r_snapshot_missing_target_endpoints_count gauge",
         f"mb3r_snapshot_missing_target_endpoints_count {len(snapshot_context.get('current_missing_endpoints', []))}",
@@ -507,15 +680,18 @@ def metrics_payload():
             ]
         )
         for service in current_missing_services:
+            journey_names = journeys_for_service(service)
+            affected = ",".join(journey_names) if journey_names else "none"
             lines.append(
-                f'mb3r_missing_model_item_info{{kind="service",name="{escape_label(service)}"}} 1'
+                f'mb3r_missing_model_item_info{{kind="service",name="{escape_label(service)}",impact="{escape_label(service_impact_label(service))}",affected_journeys="{escape_label(affected)}"}} 1'
             )
         for endpoint_id in current_missing_endpoints:
+            journey = JOURNEY_METADATA.get(endpoint_id, default_journey_metadata(endpoint_id))
             lines.append(
-                f'mb3r_missing_model_item_info{{kind="journey",name="{escape_label(endpoint_id)}"}} 1'
+                f'mb3r_missing_model_item_info{{kind="journey",name="{escape_label(journey["name"])}",journey_id="{escape_label(endpoint_id)}",impact="target-journey",affected_journeys="{escape_label(journey["name"])}"}} 1'
             )
 
-    missing_services = snapshot_context.get("recent_removed_services", [])
+    missing_services = snapshot_context.get("recent_removed_relevant_services", [])
     if missing_services:
         lines.extend(
             [
@@ -535,7 +711,30 @@ def metrics_payload():
             ]
         )
         for endpoint_id in missing_endpoints:
-            lines.append(f'mb3r_snapshot_missing_target_endpoint_info{{endpoint="{escape_label(endpoint_id)}"}} 1')
+            journey = JOURNEY_METADATA.get(endpoint_id, default_journey_metadata(endpoint_id))
+            lines.append(
+                f'mb3r_snapshot_missing_target_endpoint_info{{endpoint="{escape_label(endpoint_id)}",journey="{escape_label(journey["name"])}"}} 1'
+            )
+
+    lines.extend(
+        [
+            "# HELP mb3r_journey_info Info metric for the target frontend journeys rendered on the dashboard.",
+            "# TYPE mb3r_journey_info gauge",
+            "# HELP mb3r_journey_dependency_info Required service dependencies for each target frontend journey.",
+            "# TYPE mb3r_journey_dependency_info gauge",
+        ]
+    )
+    for endpoint_id in EXPECTED_ENDPOINT_WEIGHTS:
+        journey = JOURNEY_METADATA.get(endpoint_id, default_journey_metadata(endpoint_id))
+        journey_name = journey["name"]
+        journey_key = journey["key"]
+        lines.append(
+            f'mb3r_journey_info{{journey="{escape_label(journey_name)}",journey_key="{escape_label(journey_key)}",journey_id="{escape_label(endpoint_id)}"}} 1'
+        )
+        for service in JOURNEY_DEPENDENCIES.get(endpoint_id, []):
+            lines.append(
+                f'mb3r_journey_dependency_info{{journey="{escape_label(journey_name)}",journey_key="{escape_label(journey_key)}",journey_id="{escape_label(endpoint_id)}",service="{escape_label(service)}"}} 1'
+            )
 
     for profile in profiles:
         profile_name = profile.get("name", "default")
@@ -549,10 +748,13 @@ def metrics_payload():
         )
         for endpoint in profile.get("endpoint_results", []):
             endpoint_id = endpoint.get("endpoint_id", "")
+            journey_name = endpoint.get("journey", endpoint_id)
+            journey_key = endpoint.get("journey_key", endpoint_id)
+            journey_id = endpoint.get("journey_id", endpoint_id)
             lines.extend(
                 [
-                    f'mb3r_endpoint_availability{{profile="{escape_label(profile_name)}",endpoint="{escape_label(endpoint_id)}"}} {endpoint.get("availability", 0.0)}',
-                    f'mb3r_endpoint_threshold{{profile="{escape_label(profile_name)}",endpoint="{escape_label(endpoint_id)}"}} {endpoint.get("threshold", 0.0)}',
+                    f'mb3r_endpoint_availability{{profile="{escape_label(profile_name)}",endpoint="{escape_label(endpoint_id)}",journey="{escape_label(journey_name)}",journey_key="{escape_label(journey_key)}",journey_id="{escape_label(journey_id)}"}} {endpoint.get("availability", 0.0)}',
+                    f'mb3r_endpoint_threshold{{profile="{escape_label(profile_name)}",endpoint="{escape_label(endpoint_id)}",journey="{escape_label(journey_name)}",journey_key="{escape_label(journey_key)}",journey_id="{escape_label(journey_id)}"}} {endpoint.get("threshold", 0.0)}',
                 ]
             )
 
@@ -587,11 +789,12 @@ def poll_loop():
         try:
             status = json_get(f"{SHEAFT_BASE_URL}/status")
             report = json_get(f"{SHEAFT_BASE_URL}/current-report")
-            snapshot_context = load_snapshot_context()
+            previous_snapshot = STATE.previous_snapshot_summary()
+            snapshot_context, snapshot_summary = load_snapshot_context(previous_snapshot)
             write_json(OUTPUT_DIR / "status.json", status)
             write_json(OUTPUT_DIR / "current-report.json", report)
             write_json(OUTPUT_DIR / "snapshot-context.json", snapshot_context)
-            STATE.update_success(status, report, snapshot_context)
+            STATE.update_success(status, report, snapshot_context, snapshot_summary)
         except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, json.JSONDecodeError, OSError) as err:
             STATE.update_error(err)
         time.sleep(POLL_INTERVAL)

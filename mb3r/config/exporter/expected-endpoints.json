@@ -1,4 +1,26 @@
 {
+  "journeys": {
+    "frontend:GET /api/products": {
+      "key": "browse-products",
+      "name": "Browse Products",
+      "description": "Browse the storefront product catalog."
+    },
+    "frontend:GET /api/recommendations": {
+      "key": "view-recommendations",
+      "name": "View Recommendations",
+      "description": "Load personalized storefront recommendations."
+    },
+    "frontend:GET /api/cart": {
+      "key": "view-cart",
+      "name": "View Cart",
+      "description": "Load the active storefront cart."
+    },
+    "frontend:POST /api/checkout": {
+      "key": "complete-checkout",
+      "name": "Complete Checkout",
+      "description": "Submit the storefront checkout flow."
+    }
+  },
   "endpoint_weights": {
     "frontend:GET /api/products": 0.25,
     "frontend:GET /api/recommendations": 0.25,

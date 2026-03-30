@@ -26,7 +26,7 @@
         "y": 0
       },
       "options": {
-        "content": "## MB3R Resilience Posture\nThis is a **predicted resilience posture** view built from Bering-discovered topology and Sheaft analysis. It is not a raw health panel.\n\n### Read It In This Order\n1. **Policy Verdict**: current policy result for the latest report. Higher severity is worse: `pass -> warn -> fail -> error`.\n2. **Overall Posture**: cross-profile weighted posture score from `0` to `1`. Higher is better.\n3. **Report Age / Snapshot Age**: freshness indicators. Lower is better.\n4. **Simulated Availability by Profile**: `steady-state` is the baseline profile. The fault profiles are intentionally lower because they simulate degraded conditions.\n5. **Journey Availability by Profile**: the four target frontend journeys. `0` means the journey is currently missing or broken in the active trace-derived model.\n\n### Color Semantics\n- For posture and availability panels: **green is better, red is worse**.\n- For age panels: **green is fresher, red is staler**.\n\nRaw inputs remain available at `http://localhost:14318/metrics`, `http://localhost:19080/status`, and `http://localhost:19080/current-report`.",
+      "content": "## MB3R Resilience Posture\nThis is a **predicted resilience posture** view built from Bering-discovered topology and Sheaft analysis. It is not a raw health panel.\n\n### Read It In This Order\n1. **Policy Verdict**: current policy result for the latest report. Higher severity is worse: `pass -> warn -> fail -> error`.\n2. **Overall Posture**: cross-profile weighted posture score from `0` to `1`. Higher is better.\n3. **Report Age / Snapshot Age**: freshness indicators. Lower is better.\n4. **Simulated Availability by Profile**: `steady-state` is the baseline profile. The fault profiles are intentionally lower because they simulate degraded conditions.\n5. **Journey Availability**: the four target frontend journeys are split into separate `steady-state`, `single-service-fault`, and `correlated-service-fault` panels. Click a journey bar to filter the service dependency table below. `0` means the journey is currently missing or broken in the active trace-derived model.\n\n### Color Semantics\n- For posture and availability panels: **green is better, red is worse**.\n- For age panels: **green is fresher, red is staler**.\n\nRaw inputs remain available at `http://localhost:14318/metrics`, `http://localhost:19080/status`, and `http://localhost:19080/current-report`.",
         "mode": "markdown"
       },
       "title": "What This Shows",
@@ -221,27 +221,34 @@
       },
       "targets": [
         {
-          "expr": "mb3r_missing_model_item_info",
+          "expr": "max by (kind, name, impact, affected_journeys) (mb3r_missing_model_item_info) or label_replace(label_replace(label_replace(label_replace(absent(mb3r_missing_model_item_info), \"kind\", \"status\", \"__name__\", \".*\"), \"name\", \"none\", \"__name__\", \".*\"), \"impact\", \"none\", \"__name__\", \".*\"), \"affected_journeys\", \"none\", \"__name__\", \".*\")",
           "format": "table",
           "instant": true,
           "refId": "A"
         }
       ],
-      "title": "Missing From Model",
+      "title": "Not Observed In Current Model",
       "transformations": [
         {
           "id": "organize",
           "options": {
             "excludeByName": {
+              "affected_journeys": false,
+              "impact": false,
               "Time": true,
               "Value": true,
-              "__name__": true
+              "__name__": true,
+              "journey_id": true
             },
             "indexByName": {
               "kind": 0,
-              "name": 1
+              "name": 1,
+              "impact": 2,
+              "affected_journeys": 3
             },
             "renameByName": {
+              "affected_journeys": "Affected Journeys",
+              "impact": "Target Journey Impact",
               "kind": "Type",
               "name": "Missing Item"
             }
@@ -409,9 +416,36 @@
       "targets": [
         {
           "instant": true,
-          "expr": "mb3r_profile_aggregate_availability{aggregate=\"weighted\"}",
-          "legendFormat": "{{profile}}",
+          "expr": "mb3r_profile_aggregate_availability{aggregate=\"weighted\",profile=\"steady-state\"}",
+          "legendFormat": "steady-state",
           "refId": "A"
+        },
+        {
+          "instant": true,
+          "expr": "mb3r_profile_aggregate_availability{aggregate=\"weighted\",profile=\"single-service-fault\"}",
+          "legendFormat": "single-service-fault",
+          "refId": "B"
+        },
+        {
+          "instant": true,
+          "expr": "mb3r_profile_aggregate_availability{aggregate=\"weighted\",profile=\"correlated-service-fault\"}",
+          "legendFormat": "correlated-service-fault",
+          "refId": "C"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true
+            },
+            "indexByName": {
+              "steady-state": 0,
+              "single-service-fault": 1,
+              "correlated-service-fault": 2
+            }
+          }
         }
       ],
       "title": "Simulated Availability by Profile",
@@ -427,6 +461,13 @@
           "color": {
             "mode": "continuous-RdYlGr"
           },
+          "links": [
+            {
+              "targetBlank": false,
+              "title": "Show required services",
+              "url": "/grafana/d/mb3r-resilience/mb3r-resilience-posture?var-journey_key=${__field.labels.journey_key}&from=${__from}&to=${__to}"
+            }
+          ],
           "max": 1,
           "min": 0,
           "thresholds": {
@@ -450,7 +491,7 @@
         }
       },
       "gridPos": {
-        "h": 9,
+        "h": 4,
         "w": 12,
         "x": 12,
         "y": 11
@@ -468,13 +509,225 @@
       "targets": [
         {
           "instant": true,
-          "expr": "mb3r_endpoint_availability",
-          "legendFormat": "{{profile}} / {{endpoint}}",
+          "expr": "mb3r_endpoint_availability{profile=\"steady-state\"}",
+          "legendFormat": "{{journey}}",
           "refId": "A"
         }
       ],
-      "title": "Journey Availability by Profile",
+      "title": "Steady-State Journeys",
       "type": "bargauge"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "webstore-metrics"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "continuous-RdYlGr"
+          },
+          "links": [
+            {
+              "targetBlank": false,
+              "title": "Show required services",
+              "url": "/grafana/d/mb3r-resilience/mb3r-resilience-posture?var-journey_key=${__field.labels.journey_key}&from=${__from}&to=${__to}"
+            }
+          ],
+          "max": 1,
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 0.6
+              },
+              {
+                "color": "green",
+                "value": 0.85
+              }
+            ]
+          },
+          "unit": "percentunit"
+        }
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 12,
+        "x": 12,
+        "y": 15
+      },
+      "options": {
+        "displayMode": "gradient",
+        "orientation": "horizontal",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "instant": true,
+          "expr": "mb3r_endpoint_availability{profile=\"single-service-fault\"}",
+          "legendFormat": "{{journey}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Single-Service-Fault Journeys",
+      "type": "bargauge"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "webstore-metrics"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "continuous-RdYlGr"
+          },
+          "links": [
+            {
+              "targetBlank": false,
+              "title": "Show required services",
+              "url": "/grafana/d/mb3r-resilience/mb3r-resilience-posture?var-journey_key=${__field.labels.journey_key}&from=${__from}&to=${__to}"
+            }
+          ],
+          "max": 1,
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 0.6
+              },
+              {
+                "color": "green",
+                "value": 0.85
+              }
+            ]
+          },
+          "unit": "percentunit"
+        }
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 12,
+        "x": 12,
+        "y": 19
+      },
+      "options": {
+        "displayMode": "gradient",
+        "orientation": "horizontal",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "instant": true,
+          "expr": "mb3r_endpoint_availability{profile=\"correlated-service-fault\"}",
+          "legendFormat": "{{journey}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Correlated-Service-Fault Journeys",
+      "type": "bargauge"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "webstore-metrics"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto",
+              "wrapText": true
+            },
+            "filterable": true,
+            "inspect": true
+          }
+        }
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 12,
+        "x": 12,
+        "y": 23
+      },
+      "options": {
+        "cellHeight": "sm",
+        "footer": {
+          "countRows": false,
+          "fields": "",
+          "reducer": [
+            "sum"
+          ],
+          "show": false
+        },
+        "showHeader": true,
+        "sortBy": [
+          {
+            "desc": false,
+            "displayName": "Journey"
+          },
+          {
+            "desc": false,
+            "displayName": "Required Service"
+          }
+        ]
+      },
+      "targets": [
+        {
+          "expr": "mb3r_journey_dependency_info{journey_key=~\"$journey_key\"}",
+          "format": "table",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Journey Service Dependencies",
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "Value": true,
+              "__name__": true,
+              "journey_key": true
+            },
+            "indexByName": {
+              "journey": 0,
+              "journey_id": 1,
+              "service": 2
+            },
+            "renameByName": {
+              "journey": "Journey",
+              "journey_id": "Journey ID",
+              "service": "Required Service"
+            }
+          }
+        }
+      ],
+      "type": "table"
     },
     {
       "datasource": {
@@ -490,7 +743,7 @@
         }
       },
       "gridPos": {
-        "h": 9,
+        "h": 17,
         "w": 12,
         "x": 0,
         "y": 20
@@ -579,7 +832,7 @@
         "h": 9,
         "w": 6,
         "x": 12,
-        "y": 20
+        "y": 28
       },
       "options": {
         "legend": {
@@ -668,7 +921,7 @@
         "h": 9,
         "w": 6,
         "x": 18,
-        "y": 20
+        "y": 28
       },
       "options": {
         "legend": {
@@ -701,7 +954,34 @@
     "sheaft"
   ],
   "templating": {
-    "list": []
+    "list": [
+      {
+        "allValue": ".*",
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "webstore-metrics"
+        },
+        "definition": "label_values(mb3r_journey_info,journey_key)",
+        "hide": 2,
+        "includeAll": true,
+        "label": "Journey Drilldown",
+        "name": "journey_key",
+        "options": [],
+        "query": {
+          "qryType": 1,
+          "query": "label_values(mb3r_journey_info,journey_key)",
+          "refId": "PrometheusVariableQueryEditor-VariableQuery"
+        },
+        "refresh": 2,
+        "regex": "",
+        "sort": 1,
+        "type": "query"
+      }
+    ]
   },
   "time": {
     "from": "now-15m",
@@ -710,5 +990,5 @@
   "timezone": "browser",
   "title": "MB3R Resilience Posture",
   "uid": "mb3r-resilience",
-  "version": 9
+  "version": 14
 }
