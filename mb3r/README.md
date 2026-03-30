@@ -88,6 +88,10 @@ The current journey weights are equal at `0.25` each in [`mb3r/config/exporter/e
 
 The MB3R dashboard is a predicted resilience posture view built from Bering-discovered topology and Sheaft analysis. It should be read as a model-and-policy screen, not as a raw container health screen.
 
+Example dashboard view:
+
+![MB3R dashboard overview](./docs/screenshots/image_2026-03-30_13-22-21.png)
+
 ### Current State
 
 Contains:
