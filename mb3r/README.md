@@ -4,13 +4,21 @@ This overlay keeps the upstream Astronomy Shop demo intact and adds an MB3R path
 
 - the existing OpenTelemetry Collector fans out traces to Bering
 - Bering emits rolling discovery snapshots under [`mb3r/out/artifacts`](./out/artifacts)
-- the snapshot sanitizer writes a Sheaft-safe copy to `latest-snapshot-sanitized.json`
+- the snapshot sanitizer writes a Sheaft-safe copy of Bering's reconciled
+  topology to `latest-snapshot-sanitized.json`
 - Sheaft watches the sanitized snapshot and writes report history under [`mb3r/out/history`](./out/history)
-- the MB3R exporter mirrors the current Sheaft report under [`mb3r/out/reports`](./out/reports) and exposes Prometheus metrics for Grafana
+- the MB3R exporter combines the Sheaft report with Bering's current
+  `raw_window`, zero-fills journeys whose required services are not currently
+  observed, and exposes Prometheus metrics for Grafana
 - Grafana gets an additive MB3R dashboard at the existing `/grafana/` route
 - the MB3R probe keeps the four target storefront journeys warm so they stay visible in the trace-derived model
 
 This is a resilience posture overlay, not a replacement for the demo's existing observability dashboards.
+
+Pinned MB3R component versions:
+
+- Bering `v1.0.0` (`io.mb3r.bering.snapshot@1.3.0`)
+- Sheaft `v1.1.0`
 
 ## Start
 
@@ -48,7 +56,11 @@ docker compose --env-file .env --env-file .env.override `
 
 Host-visible artifacts:
 
-- Latest raw Bering snapshot: [`mb3r/out/artifacts/latest-snapshot.json`](./out/artifacts/latest-snapshot.json)
+- Latest reconciled Bering snapshot: [`mb3r/out/artifacts/latest-snapshot.json`](./out/artifacts/latest-snapshot.json)
+- Latest raw discovery window:
+  [`mb3r/out/artifacts/latest-raw-window.json`](./out/artifacts/latest-raw-window.json)
+- Latest stable-core projection:
+  [`mb3r/out/artifacts/latest-stable-core.json`](./out/artifacts/latest-stable-core.json)
 - Latest sanitized snapshot: [`mb3r/out/artifacts/latest-snapshot-sanitized.json`](./out/artifacts/latest-snapshot-sanitized.json)
 - Rolling Bering snapshots: [`mb3r/out/artifacts/snapshots`](./out/artifacts/snapshots)
 - Current mirrored Sheaft status: [`mb3r/out/reports/status.json`](./out/reports/status.json)
@@ -83,6 +95,37 @@ The predicate contract is defined in [`mb3r/config/sheaft/predicate-contract.yam
 - `POST /api/checkout` requires `frontend`, `checkout`, `cart`, `payment`, and `shipping`
 
 The current journey weights are equal at `0.25` each in [`mb3r/config/exporter/expected-endpoints.json`](./config/exporter/expected-endpoints.json). That means the current `Overall Posture` is effectively an average across the four target journeys, not traffic-weighted business importance.
+
+### Reconciled Topology Vs Current Observation
+
+Bering v1 publishes two different views that answer different questions:
+
+- `latest-snapshot.json` is the reconciled topology: services Bering knows are
+  part of the architecture remain present across short telemetry gaps
+- `latest-raw-window.json` is the current observation: services absent from the
+  latest discovery window are absent from this view
+
+In plain terms:
+
+```text
+reconciled topology: "cart is part of this system"
+raw window:          "cart was not observed working in the current window"
+```
+
+Sheaft uses the sanitized reconciled topology for stable resilience simulation.
+The exporter separately reads the raw window for live journey impact. If a
+required service is missing from the raw window, the exporter overrides every
+affected target journey to `0` before recalculating `Overall Posture` and
+`Policy Verdict`.
+
+For example, stopping `cart` produces this expected result after the next
+Bering discovery window:
+
+- `View Cart` becomes `0`
+- `Complete Checkout` becomes `0`
+- the exporter verdict becomes `fail`
+- raw Sheaft can remain `pass`, because it is intentionally analyzing the
+  stable reconciled architecture rather than current runtime health
 
 ## Dashboard: What Each Block Means
 
@@ -123,11 +166,14 @@ Important:
 
 ### Not Observed In Current Model
 
-Shows services and target journeys that are missing from the current Bering snapshot.
+Shows services and target journeys that are missing from Bering's current raw
+discovery window.
 
 Interpretation:
 
 - this is trace-derived model presence
+- the raw window is used here so Bering reconciliation cannot hide a live
+  service outage by retaining a previously known service in `guardrail_union`
 - this is not the same thing as Docker or Kubernetes health
 - a service can be running and still appear here if it is not being observed in the current discovery window
 
@@ -345,6 +391,11 @@ Check:
 - `docker logs mb3r-probe`
 
 If the probe is already failing and the cart/checkout journeys were already absent from the trace model before you stopped `cart`, the posture may already be sitting on the degraded plateau.
+
+With Bering reconciliation enabled, Sheaft continues to analyze the stable
+reconciled topology. The exporter separately reads `latest-raw-window.json`; a
+missing required service overrides the affected dashboard journeys to `0`
+without discarding the reconciled model.
 
 ### `cart` is healthy but cart and checkout are missing from the dashboard
 

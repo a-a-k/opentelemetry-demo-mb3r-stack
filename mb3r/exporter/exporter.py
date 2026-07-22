@@ -407,6 +407,11 @@ def load_snapshot_context(previous_snapshot=None):
     except (OSError, json.JSONDecodeError):
         return context, summary
 
+    # Bering reconciliation projections wrap the actual snapshot so operators can
+    # inspect raw_window, stable_core, and guardrail_union side by side.
+    if isinstance(current.get("snapshot"), dict):
+        current = current["snapshot"]
+
     context["current_snapshot_id"] = str(current.get("snapshot_id") or "")
     current_services = item_ids((current.get("model") or {}).get("services"))
     current_endpoints = item_ids((current.get("model") or {}).get("endpoints"))
@@ -470,7 +475,17 @@ def normalized_profiles(report_payload):
     ]
 
 
-def modeled_profiles(report_payload):
+def unavailable_journey_ids(snapshot_context):
+    unavailable = set(snapshot_context.get("current_missing_endpoints", []))
+    missing_services = set(snapshot_context.get("current_missing_relevant_services", []))
+    for endpoint_id, dependencies in JOURNEY_DEPENDENCIES.items():
+        if missing_services.intersection(dependencies):
+            unavailable.add(endpoint_id)
+    return unavailable
+
+
+def modeled_profiles(report_payload, unavailable_endpoints=None):
+    unavailable_endpoints = set(unavailable_endpoints or [])
     profiles = normalized_profiles(report_payload)
     modeled = []
     for profile in profiles:
@@ -490,6 +505,8 @@ def modeled_profiles(report_payload):
         for endpoint_id, weight in EXPECTED_ENDPOINT_WEIGHTS.items():
             source = by_endpoint.get(endpoint_id, {})
             availability = float(source.get("availability", 0.0) or 0.0)
+            if endpoint_id in unavailable_endpoints:
+                availability = 0.0
             threshold = float(source.get("threshold", POLICY["endpoint_threshold"]) or POLICY["endpoint_threshold"])
             journey = JOURNEY_METADATA.get(endpoint_id, default_journey_metadata(endpoint_id))
             endpoint_results.append(
@@ -614,8 +631,9 @@ def metrics_payload():
         or ("error" if state["last_error"] else "report")
     )
 
+    snapshot_context = state.get("snapshot_context") or {}
     raw_profiles = normalized_profiles(report)
-    profiles = modeled_profiles(report)
+    profiles = modeled_profiles(report, unavailable_journey_ids(snapshot_context))
     summary = report.get("summary", {})
     posture = None
     if profiles:
@@ -628,8 +646,6 @@ def metrics_payload():
         posture = 0.0
     decision = modeled_decision(profiles, posture, source_decision)
     decision_code = DECISION_CODES.get(decision, 4)
-    snapshot_context = state.get("snapshot_context") or {}
-
     generated_at = status.get("generated_at") or report.get("generated_at")
     generated_ts = parse_timestamp(generated_at)
     report_age = max(0.0, now_epoch() - generated_ts) if generated_ts else 0.0

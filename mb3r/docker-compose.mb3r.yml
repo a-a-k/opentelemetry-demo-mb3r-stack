@@ -3,7 +3,7 @@
 
 services:
   bering:
-    image: ghcr.io/mb3r-lab/bering@sha256:8e8ce6599b43477b0653617e829d41c62a3189d16b60ecb424cca718fc0e2674
+    image: ghcr.io/mb3r-lab/bering@sha256:1da482d2629f695e0109525fb9c27e1fd8c502da85af4bbae95ddb176969c3d5
     container_name: bering
     restart: unless-stopped
     command: ["serve", "--config", "/etc/mb3r/bering/serve.yaml"]
@@ -33,7 +33,7 @@ services:
         condition: service_started
 
   sheaft:
-    image: ghcr.io/mb3r-lab/sheaft@sha256:eb1ebf9d96c55c5bb29e226e07496d152eb3a66b52dd9d34ba799fa4aef70624
+    image: ghcr.io/mb3r-lab/sheaft@sha256:d33f5890f051ca57d380cacc11825979396534289174ccd64079b5e037503351
     container_name: sheaft
     restart: unless-stopped
     command: ["serve", "--config", "/etc/mb3r/sheaft/serve.yaml"]
@@ -65,6 +65,7 @@ services:
       - EXPORTER_LISTEN=0.0.0.0:9113
       - EXPORTER_POLL_INTERVAL=5
       - EXPORTER_OUTPUT_DIR=/mb3r/out/reports
+      - EXPORTER_SNAPSHOT_PATH=/mb3r/out/artifacts/latest-raw-window.json
       - EXPORTER_ENDPOINT_CONFIG=/etc/mb3r/exporter/expected-endpoints.json
       - EXPORTER_SERVICE_INVENTORY_CONFIG=/etc/mb3r/exporter/service-inventory.json
       - EXPORTER_DEPENDENCY_CONFIG=/etc/mb3r/exporter/endpoint-dependencies.json
