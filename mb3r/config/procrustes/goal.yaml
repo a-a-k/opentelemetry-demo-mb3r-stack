@@ -1,0 +1,15 @@
+# Copyright The OpenTelemetry Authors
+# SPDX-License-Identifier: Apache-2.0
+contract:
+  name: io.mb3r.procrustes.goal
+  version: 0.1.0
+scope:
+  namespaces: [default]
+  services: [frontend, checkout]
+operation:
+  id: otel-demo-checkout
+  entry_service: frontend
+  method: POST
+  path: /api/checkout
+  mandatory_targets: [checkout]
+  scenario_ref: 06-checking-out-cart.yaml

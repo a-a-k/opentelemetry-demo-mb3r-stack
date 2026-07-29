@@ -84,6 +84,45 @@ jobs:
       - name: run checklicense
         run: make checklicense
 
+  procrustes-preflight:
+    name: Procrustes static preflight
+    runs-on: ubuntu-latest
+    steps:
+      - name: check out OpenTelemetry Demo
+        uses: actions/checkout@v6.0.2
+      - name: check out Procrustes
+        uses: actions/checkout@v6.0.2
+        with:
+          repository: MB3R-Lab/Procrustes
+          ref: main
+          path: .procrustes-source
+      - name: set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.26.2'
+          cache-dependency-path: .procrustes-source/go.sum
+      - name: build Procrustes
+        working-directory: .procrustes-source
+        run: go build -o ../procrustes-bin ./cmd/procrustes
+      - name: analyze checkout static eligibility
+        run: >-
+          ./procrustes-bin analyze
+          --source k8s=kubernetes
+          --source tests=test/tracetesting
+          --source preflight=mb3r/config/procrustes
+          --goal mb3r/config/procrustes/goal.yaml
+          --out-dir mb3r/out/procrustes
+          --fail-on-blocked
+      - name: add Procrustes result to job summary
+        if: always()
+        run: cat mb3r/out/procrustes/summary.md >> "$GITHUB_STEP_SUMMARY"
+      - name: upload Procrustes report
+        if: always()
+        uses: actions/upload-artifact@v7.0.0
+        with:
+          name: opentelemetry-demo-procrustes-preflight
+          path: mb3r/out/procrustes
+
   build-test:
     needs: [
       build_images,
@@ -92,7 +131,8 @@ jobs:
       misspell,
       checklinks,
       sanity,
-      checklicense
+      checklicense,
+      procrustes-preflight
     ]
     if: always() && !cancelled()
     runs-on: ubuntu-latest
